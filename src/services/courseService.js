@@ -1444,8 +1444,9 @@ export const courseService = {
   },
 
   /**
-   * Fetch authorized Vimeo playback details via secure backend endpoint / proxy
-   * Never exposes Vimeo API secrets in client code
+   * Fetch authorized Vimeo playback details directly using Vimeo API (reproducing Flutter VimeoPlayerV2)
+   * Calls https://api.vimeo.com/videos/{videoId} with Bearer token
+   * Extracts play.progressive video URLs (highest up to 720p), falling back to play.hls.link
    * @param {string|number} vimeoId
    * @param {string} [vimeoHash]
    * @param {string} [token]
@@ -1457,7 +1458,83 @@ export const courseService = {
     if (!cleanId) return null
 
     return _cachedFetch(`vimeo_playback:${cleanId}:${vimeoHash || ''}`, async () => {
-      // 1. Try backend API endpoint (GET /api/vimeo/playback/:id or GET /api/video/:id/playback)
+      // Check for Vimeo Access Token in frontend environment variables
+      const vimeoAccessToken =
+        (typeof import.meta !== 'undefined' && import.meta.env?.VITE_VIMEO_ACCESS_TOKEN) ||
+        (typeof process !== 'undefined' && (process.env?.VITE_VIMEO_ACCESS_TOKEN || process.env?.VIMEO_ACCESS_TOKEN)) ||
+        null
+
+      // 1. Replicate Flutter VimeoPlayerV2: Direct call to https://api.vimeo.com/videos/{videoId}
+      if (vimeoAccessToken) {
+        try {
+          const vimeoRes = await fetch(`https://api.vimeo.com/videos/${cleanId}`, {
+            headers: {
+              'Authorization': `Bearer ${vimeoAccessToken}`,
+              'Accept': 'application/vnd.vimeo.*+json;version=3.4',
+            },
+          })
+
+          if (vimeoRes.ok) {
+            const data = await vimeoRes.json()
+            
+            // Extract from data.play.progressive or data.files
+            const progressiveList =
+              data?.play?.progressive ||
+              (Array.isArray(data?.files) ? data.files.filter((f) => f.type === 'video/mp4' || f.container === 'mp4') : [])
+
+            // Select highest available quality up to 720p (720p, then 540p, 480p, 360p, 240p)
+            let selectedProg = null
+            const qualityRanks = ['720p', '540p', '480p', '360p', '240p']
+
+            for (const q of qualityRanks) {
+              const match = progressiveList.find(
+                (p) =>
+                  String(p.quality || p.public_name || '').toLowerCase() === q ||
+                  String(p.rendition || '').toLowerCase() === q ||
+                  Number(p.height) === parseInt(q, 10)
+              )
+              if (match && (match.link || match.url)) {
+                selectedProg = match
+                break
+              }
+            }
+
+            // Fallback to any progressive <= 720p or first available
+            if (!selectedProg && progressiveList.length > 0) {
+              selectedProg =
+                progressiveList.find((p) => Number(p.height || 0) <= 720 && (p.link || p.url)) ||
+                progressiveList[0]
+            }
+
+            const progressiveUrl = selectedProg?.link || selectedProg?.url || null
+
+            // Fallback to play.hls.link if progressive URLs are unavailable
+            const hlsUrl =
+              data?.play?.hls?.link ||
+              data?.files?.find((f) => f.quality === 'hls' || f.container === 'm3u8')?.link ||
+              null
+
+            const resolvedPlayUrl = progressiveUrl || hlsUrl
+
+            if (resolvedPlayUrl) {
+              return {
+                success: true,
+                vimeo_id: cleanId,
+                playback_url: resolvedPlayUrl,
+                hls_url: hlsUrl,
+                embed_url: data.player_embed_url || `https://player.vimeo.com/video/${cleanId}`,
+                vimeo_hash: vimeoHash,
+                title: data.name,
+                duration: data.duration,
+              }
+            }
+          }
+        } catch (vimeoErr) {
+          console.warn('Vimeo direct API fetch note:', vimeoErr.message)
+        }
+      }
+
+      // 2. Try backend API endpoint (GET /api/vimeo/playback/:id or GET /api/video/:id/playback)
       try {
         const headers = { 'Accept': 'application/json' }
         if (token) headers['Authorization'] = `Bearer ${token}`

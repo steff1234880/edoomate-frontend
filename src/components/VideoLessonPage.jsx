@@ -36,6 +36,7 @@ export default function VideoLessonPage() {
   // Vimeo Player & Playback State
   const vimeoIframeRef = useRef(null)
   const vimeoPlayerInstanceRef = useRef(null)
+  const nativeVideoRef = useRef(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -356,6 +357,30 @@ export default function VideoLessonPage() {
           } catch (e) {}
         }
 
+        // Known unlisted privacy hashes mapped to avoid Vimeo 403 privacy blocks
+        const knownHashes = {
+          '1210740700': '9f970bbe8c',
+          '1223699835': 'ae550e56cc',
+          '1228571169': 'ea6f6d3b15',
+          '1228571186': 'dd551c4f71',
+        }
+        if (resolvedVimeoId && !resolvedVimeoHash && knownHashes[resolvedVimeoId]) {
+          resolvedVimeoHash = knownHashes[resolvedVimeoId]
+        }
+
+        // Fetch authorized playback details (progressive MP4 / HLS) via backend API or proxy
+        let playbackInfo = null
+        if (resolvedVimeoId) {
+          try {
+            playbackInfo = await courseService.getVimeoPlaybackDetails(resolvedVimeoId, resolvedVimeoHash, token)
+            if (playbackInfo?.vimeo_hash && !resolvedVimeoHash) {
+              resolvedVimeoHash = playbackInfo.vimeo_hash
+            }
+          } catch (pErr) {
+            console.warn('Playback details query note:', pErr.message)
+          }
+        }
+
         if (isMounted) {
           setAvatarDefinition(fetchedAvatarDef)
           setVideoData({
@@ -365,6 +390,8 @@ export default function VideoLessonPage() {
             duration: durationStr,
             vimeoId: resolvedVimeoId,
             vimeoHash: resolvedVimeoHash,
+            playbackUrl: playbackInfo?.playback_url || null,
+            hlsUrl: playbackInfo?.hls_url || null,
             avatarLink: resolvedAvatarLink,
             avatarDefinition: fetchedAvatarDef,
             thumbnailUrl: fetchedDetail?.preview_image_url || fetchedDetail?.video_thumbnail,
@@ -485,8 +512,16 @@ export default function VideoLessonPage() {
     }
   }, [videoData?.vimeoId, courseId, lessonId, topicId])
 
-  // Playback Controls
+  // Playback Controls (Unified for both HTML5 native <video> and Vimeo iframe Player)
   const togglePlayPause = () => {
+    if (nativeVideoRef.current) {
+      if (isPlaying) {
+        nativeVideoRef.current.pause()
+      } else {
+        nativeVideoRef.current.play().catch((e) => console.warn(e))
+      }
+      return
+    }
     if (!vimeoPlayerInstanceRef.current) return
     if (isPlaying) {
       vimeoPlayerInstanceRef.current.pause().catch((e) => console.warn(e))
@@ -496,31 +531,56 @@ export default function VideoLessonPage() {
   }
 
   const handleSeek = (e) => {
-    if (!vimeoPlayerInstanceRef.current || duration <= 0) return
     const seekPercent = parseFloat(e.target.value)
     const targetSeconds = (seekPercent / 100) * duration
     setCurrentTime(targetSeconds)
+
+    if (nativeVideoRef.current) {
+      nativeVideoRef.current.currentTime = targetSeconds
+      return
+    }
+
+    if (!vimeoPlayerInstanceRef.current || duration <= 0) return
     vimeoPlayerInstanceRef.current.setCurrentTime(targetSeconds).catch((err) => console.warn(err))
   }
 
   const toggleMute = () => {
-    if (!vimeoPlayerInstanceRef.current) return
     const nextMuted = !isMuted
     setIsMuted(nextMuted)
+
+    if (nativeVideoRef.current) {
+      nativeVideoRef.current.muted = nextMuted
+      return
+    }
+
+    if (!vimeoPlayerInstanceRef.current) return
     vimeoPlayerInstanceRef.current.setMuted(nextMuted).catch((e) => console.warn(e))
   }
 
   const handleVolumeChange = (e) => {
-    if (!vimeoPlayerInstanceRef.current) return
     const val = parseFloat(e.target.value)
     setVolume(val)
     setIsMuted(val === 0)
+
+    if (nativeVideoRef.current) {
+      nativeVideoRef.current.volume = val
+      nativeVideoRef.current.muted = val === 0
+      return
+    }
+
+    if (!vimeoPlayerInstanceRef.current) return
     vimeoPlayerInstanceRef.current.setVolume(val).catch((e) => console.warn(e))
   }
 
   const handleSpeedChange = (speed) => {
     setPlaybackSpeed(speed)
     const rate = parseFloat(speed.replace('x', ''))
+
+    if (nativeVideoRef.current) {
+      nativeVideoRef.current.playbackRate = rate
+      return
+    }
+
     if (vimeoPlayerInstanceRef.current) {
       vimeoPlayerInstanceRef.current.setPlaybackRate(rate).catch((e) => console.warn(e))
     }
@@ -726,7 +786,50 @@ export default function VideoLessonPage() {
                   : { minHeight: '360px', maxHeight: '620px' }
               }
             >
-              {videoData.vimeoId ? (
+              {videoData.playbackUrl ? (
+                <div className="w-100 h-100 position-relative d-flex align-items-center justify-content-center bg-black">
+                  <video
+                    ref={nativeVideoRef}
+                    src={videoData.playbackUrl}
+                    controls
+                    playsInline
+                    className="w-100 h-100"
+                    style={{ objectFit: 'contain', maxHeight: isFullscreen ? '100vh' : '620px' }}
+                    onPlay={() => setIsPlaying(true)}
+                    onPause={() => setIsPlaying(false)}
+                    onTimeUpdate={(e) => {
+                      const sec = e.currentTarget.currentTime || 0
+                      setCurrentTime(sec)
+                      if (e.currentTarget.duration) setDuration(e.currentTarget.duration)
+                      if (courseId && sec > 0) {
+                        courseService.saveStoredProgress(courseId, {
+                          videoId: videoData.id,
+                          topicId: topicId || null,
+                          lastLessonId: lessonId || null,
+                          videoTimestamp: Math.floor(sec),
+                        }, authService.getToken())
+                      }
+                    }}
+                    onLoadedMetadata={(e) => {
+                      if (e.currentTarget.duration) setDuration(e.currentTarget.duration)
+                      if (resumeTimeRef.current > 0) {
+                        e.currentTarget.currentTime = resumeTimeRef.current
+                      }
+                    }}
+                    onEnded={() => {
+                      setIsPlaying(false)
+                      if (courseId) {
+                        courseService.saveStoredProgress(courseId, {
+                          videoId: videoData.id,
+                          topicId: topicId || null,
+                          lastLessonId: lessonId || null,
+                          videoTimestamp: 0,
+                        }, authService.getToken())
+                      }
+                    }}
+                  />
+                </div>
+              ) : videoData.vimeoId ? (
                 <div className="ratio ratio-16x9 w-100 h-100">
                   <iframe
                     ref={vimeoIframeRef}
