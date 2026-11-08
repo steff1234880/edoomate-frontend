@@ -1444,6 +1444,87 @@ export const courseService = {
   },
 
   /**
+   * Fetch authorized Vimeo playback details via secure backend endpoint / proxy
+   * Never exposes Vimeo API secrets in client code
+   * @param {string|number} vimeoId
+   * @param {string} [vimeoHash]
+   * @param {string} [token]
+   * @returns {Promise<Object>} { success, playback_url, hls_url, embed_url, vimeo_hash, title, duration }
+   */
+  async getVimeoPlaybackDetails(vimeoId, vimeoHash = null, token = null) {
+    if (!vimeoId) return null
+    const cleanId = String(vimeoId).replace(/\D/g, '')
+    if (!cleanId) return null
+
+    return _cachedFetch(`vimeo_playback:${cleanId}:${vimeoHash || ''}`, async () => {
+      // 1. Try backend API endpoint (GET /api/vimeo/playback/:id or GET /api/video/:id/playback)
+      try {
+        const headers = { 'Accept': 'application/json' }
+        if (token) headers['Authorization'] = `Bearer ${token}`
+        const hashQuery = vimeoHash ? `?h=${encodeURIComponent(vimeoHash)}` : ''
+        const res = await fetch(`${API_BASE_URL}/vimeo/playback/${cleanId}${hashQuery}`, { headers })
+        if (res.ok) {
+          const data = await res.json()
+          if (data && (data.playback_url || data.data?.playback_url)) {
+            return data.data || data
+          }
+        }
+      } catch (e) {
+        // Backend endpoint not deployed yet
+      }
+
+      // 2. Try proxy endpoint /api/vimeo/playback/:id
+      try {
+        const hashQuery = vimeoHash ? `?h=${encodeURIComponent(vimeoHash)}` : ''
+        const res = await fetch(`/api/vimeo/playback/${cleanId}${hashQuery}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (data && data.playback_url) {
+            return data
+          }
+        }
+      } catch (e) {}
+
+      // 3. Direct Vimeo player config resolution if hash is provided
+      if (vimeoHash) {
+        try {
+          const cfgRes = await fetch(`https://player.vimeo.com/video/${cleanId}/config?h=${encodeURIComponent(vimeoHash)}`, {
+            headers: {
+              'Referer': 'https://edoomate.myieltspartner.com/',
+            },
+          })
+          if (cfgRes.ok) {
+            const cfg = await cfgRes.json()
+            const files = cfg.request?.files?.progressive || []
+            const prog = files.find((f) => f.quality === '720p') || files.find((f) => f.quality === '1080p') || files[0]
+            if (prog?.url) {
+              return {
+                success: true,
+                vimeo_id: cleanId,
+                playback_url: prog.url,
+                hls_url: cfg.request?.files?.hls?.default_cdn ? cfg.request?.files?.hls?.cdns?.[cfg.request.files.hls.default_cdn]?.url : null,
+                embed_url: `https://player.vimeo.com/video/${cleanId}?h=${encodeURIComponent(vimeoHash)}`,
+                vimeo_hash: vimeoHash,
+                title: cfg.video?.title,
+                duration: cfg.video?.duration,
+              }
+            }
+          }
+        } catch (e) {}
+
+        return {
+          success: true,
+          vimeo_id: cleanId,
+          vimeo_hash: vimeoHash,
+          embed_url: `https://player.vimeo.com/video/${cleanId}?h=${encodeURIComponent(vimeoHash)}&autoplay=0&title=0&byline=0&portrait=0`,
+        }
+      }
+
+      return null
+    }, CONTENT_CACHE_TTL_MS)
+  },
+
+  /**
    * Submit MCQ answers to backend API
    * Endpoint: POST /api/test/submit
    * @param {Object} submissionPayload - { submitted_data_id, total_questions, submitted_answer }

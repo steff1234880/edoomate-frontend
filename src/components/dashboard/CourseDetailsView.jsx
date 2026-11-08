@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import React, { useState, useEffect, useRef } from 'react'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { courseService } from '../../services/courseService'
 import { authService } from '../../services/authService'
 
@@ -60,6 +60,8 @@ export default function CourseDetailsView({
   const currentUser = authService.getUser() || {}
 
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const verifyingSessionRef = useRef(null)
   const courseId = course?.id || course?.course_id || searchParams.get('courseId')
 
 
@@ -264,15 +266,75 @@ export default function CourseDetailsView({
   const isFree = courseData?.is_free === true || courseData?.is_free === 1 || parseFloat(price) === 0
   const isExpired = accessState.isExpired
   const hasAccess = !isExpired && (isFree || accessState.hasAccess)
-  // Automatic Stripe Return Callback & Confirmation Handler
+
+  // Clean URL query parameters helper to avoid lingering or duplicate session triggers
+  const cleanUrlParams = () => {
+    try {
+      const url = new URL(window.location.href)
+      let changed = false
+      ;['session_id', 'stripe_session_id', 'payment_status', 'status'].forEach((param) => {
+        if (url.searchParams.has(param)) {
+          url.searchParams.delete(param)
+          changed = true
+        }
+      })
+      if (changed) {
+        window.history.replaceState({}, document.title, url.pathname + (url.search ? url.search : '') + url.hash)
+      }
+    } catch {}
+  }
+
+  // Guard against back-navigation showing open checkout modal when course already owned/active
+  useEffect(() => {
+    if (hasAccess && checkoutFlowView === 'checkout') {
+      setCheckoutFlowView('none')
+    }
+  }, [hasAccess, checkoutFlowView])
+
+  // Handle browser back-button (popstate) to dismiss checkout overlay cleanly
+  useEffect(() => {
+    const handlePopState = () => {
+      if (checkoutFlowView === 'checkout' || checkoutFlowView === 'verifying') {
+        setCheckoutFlowView('none')
+      }
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [checkoutFlowView])
+
+  // Automatic Stripe Return Callback & Authoritative Confirmation Handler
   useEffect(() => {
     const sessionId = searchParams.get('session_id') || searchParams.get('stripe_session_id')
     const paymentStatusParam = searchParams.get('payment_status') || searchParams.get('status')
 
-    // If returning from Stripe Checkout with session_id
+    if (!sessionId && !paymentStatusParam) return
+
+    // 1. Returning with session_id from successful Stripe Checkout
     if (sessionId) {
+      const sessionKey = `edoomate_stripe_${sessionId}`
+      const isAlreadyConfirmed = sessionStorage.getItem(sessionKey) === 'confirmed'
+
+      // Prevent duplicate verification if already confirmed
+      if (isAlreadyConfirmed) {
+        cleanUrlParams()
+        courseService.clearMyLearningCache()
+        if (onPaymentSuccess) {
+          onPaymentSuccess(courseData)
+        } else {
+          navigate('/courses', { replace: true })
+        }
+        return
+      }
+
+      // In-flight guard to prevent duplicate concurrent confirmation API calls
+      if (verifyingSessionRef.current === sessionId) return
+      verifyingSessionRef.current = sessionId
+
       const token = authService.getToken()
-      if (!token) return
+      if (!token) {
+        cleanUrlParams()
+        return
+      }
 
       setIsProcessingPayment(true)
       setCheckoutFlowView('verifying')
@@ -281,37 +343,67 @@ export default function CourseDetailsView({
         .verifyPaymentStatus(courseId, token, sessionId)
         .then((result) => {
           setIsProcessingPayment(false)
+          verifyingSessionRef.current = null
+
           if (result.isVerified || result.hasAccess) {
+            // Mark session as confirmed in sessionStorage
+            sessionStorage.setItem(sessionKey, 'confirmed')
+            // Invalidate caches so newly purchased course is immediately available in My Learning
+            courseService.clearMyLearningCache()
+            cleanUrlParams()
+
             setPaymentStatus('success')
-            setCheckoutFlowView('result')
-            verifyAccess()
+            setCheckoutFlowView('none')
+            setAccessState({
+              isLoading: false,
+              hasAccess: true,
+              isExpired: false,
+              isInactive: false,
+              status: 'active',
+              reason: 'Payment verified and course access granted.',
+            })
+
+            // Requirements 2 & 3: Once payment is confirmed, redirect the user directly to the My Learning page
             if (onPaymentSuccess) {
               onPaymentSuccess(courseData)
+            } else {
+              navigate('/courses', { replace: true })
             }
           } else if (result.status === 'failed') {
+            cleanUrlParams()
             setPaymentStatus('failed')
             setPaymentError(result.message || 'Payment confirmation failed with server.')
             setCheckoutFlowView('result')
           } else {
+            cleanUrlParams()
             setPaymentStatus('pending')
             setCheckoutFlowView('result')
           }
         })
         .catch((err) => {
           setIsProcessingPayment(false)
+          verifyingSessionRef.current = null
+          cleanUrlParams()
           setPaymentStatus('failed')
           setPaymentError(err.message || 'Error verifying Stripe payment.')
           setCheckoutFlowView('result')
         })
     } else if (paymentStatusParam === 'cancelled' || paymentStatusParam === 'cancel') {
+      cleanUrlParams()
+      setIsProcessingPayment(false)
       setPaymentStatus('cancelled')
       setPaymentError('You cancelled the Stripe checkout session. Your card was not charged.')
       setCheckoutFlowView('result')
     }
-  }, [searchParams, courseId])
+  }, [searchParams, courseId, onPaymentSuccess, navigate, courseData])
 
   // 1. Open Course Checkout Screen (Screenshot 2)
   const handleOpenCheckout = () => {
+    // Prevent duplicate purchases if user already has access
+    if (hasAccess) {
+      if (onContinueLearning) onContinueLearning(courseData)
+      return
+    }
     setPaymentError(null)
     setPaymentStatus(null)
     setCheckoutFlowView('checkout')
@@ -319,6 +411,12 @@ export default function CourseDetailsView({
 
   // 2. Click "Proceed to Buy" on Course Checkout -> Call Real POST /payment/stripe/checkout -> Redirect to Stripe
   const handleProceedToPayment = async () => {
+    if (hasAccess) {
+      setCheckoutFlowView('none')
+      if (onContinueLearning) onContinueLearning(courseData)
+      return
+    }
+
     const token = authService.getToken()
     if (!token) {
       setPaymentError('Please log in to continue purchase.')
@@ -358,10 +456,15 @@ export default function CourseDetailsView({
 
   // 4. Retry Payment: Initiates a fresh Stripe checkout attempt without creating duplicate orders
   const handleRetryPayment = () => {
+    if (hasAccess) {
+      setCheckoutFlowView('none')
+      if (onContinueLearning) onContinueLearning(courseData)
+      return
+    }
     setPaymentError(null)
     setPaymentStatus(null)
-    // Return to Course checkout screen to allow user to retry Proceed to Buy
     setCheckoutFlowView('checkout')
+    handleProceedToPayment()
   }
 
   // 5. Retry Verification: Checks existing transaction/enrollment status with server without re-charging
@@ -378,11 +481,25 @@ export default function CourseDetailsView({
       setIsProcessingPayment(false)
 
       if (result.isVerified || result.hasAccess) {
+        if (sessionId) {
+          sessionStorage.setItem(`edoomate_stripe_${sessionId}`, 'confirmed')
+        }
+        courseService.clearMyLearningCache()
+        cleanUrlParams()
         setPaymentStatus('success')
-        setCheckoutFlowView('result')
-        verifyAccess()
+        setCheckoutFlowView('none')
+        setAccessState({
+          isLoading: false,
+          hasAccess: true,
+          isExpired: false,
+          isInactive: false,
+          status: 'active',
+          reason: 'Payment verified and course access granted.',
+        })
         if (onPaymentSuccess) {
           onPaymentSuccess(courseData)
+        } else {
+          navigate('/courses', { replace: true })
         }
       } else {
         setPaymentStatus('pending')

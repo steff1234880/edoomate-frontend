@@ -675,11 +675,11 @@ export default function StudentDashboard({ onLogout }) {
   }
 
   // Consistent Navigation Handler using React Router
-  const navigateTo = (view, navId = null, search = '') => {
+  const navigateTo = (view, navId = null, search = '', navOptions = {}) => {
     const cleanView = String(view).replace(/^\/+/, '')
     const basePath = cleanView === 'home' ? '/dashboard' : cleanView === 'explore' ? '/explore' : `/${cleanView}`
     const fullPath = search ? `${basePath}${search.startsWith('?') ? search : '?' + search}` : basePath
-    navigate(fullPath)
+    navigate(fullPath, navOptions)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -735,6 +735,54 @@ export default function StudentDashboard({ onLogout }) {
       }
     }
   }, [location.pathname, location.search])
+
+  // Top-level Stripe payment return handler (when landing directly on /courses or /dashboard)
+  useEffect(() => {
+    const sessionId = searchParams.get('session_id') || searchParams.get('stripe_session_id')
+    if (!sessionId || activeView === 'course-details') return
+
+    const sessionKey = `edoomate_stripe_${sessionId}`
+    const token = authService.getToken()
+    if (!token) return
+
+    const cleanSessionParams = () => {
+      try {
+        const url = new URL(window.location.href)
+        let changed = false
+        ;['session_id', 'stripe_session_id', 'payment_status', 'status'].forEach((param) => {
+          if (url.searchParams.has(param)) {
+            url.searchParams.delete(param)
+            changed = true
+          }
+        })
+        if (changed) {
+          window.history.replaceState({}, document.title, url.pathname + (url.search ? url.search : '') + url.hash)
+        }
+      } catch {}
+    }
+
+    if (sessionStorage.getItem(sessionKey) === 'confirmed') {
+      cleanSessionParams()
+      return
+    }
+
+    courseService
+      .confirmStripePayment(sessionId, token)
+      .then(() => {
+        sessionStorage.setItem(sessionKey, 'confirmed')
+        courseService.clearMyLearningCache()
+        fetchPurchasedCourse()
+        cleanSessionParams()
+        triggerToast('🎉 Payment confirmed! Your course is now active in My Learning.')
+        if (activeView !== 'courses') {
+          navigateTo('courses', 'courses', '', { replace: true })
+        }
+      })
+      .catch((err) => {
+        console.warn('Dashboard payment confirmation failed:', err)
+        cleanSessionParams()
+      })
+  }, [searchParams, activeView])
 
   // Navigate to Course Details Page (Screenshot 1)
   const handleOpenCourseDetails = (course) => {
@@ -1403,6 +1451,11 @@ export default function StudentDashboard({ onLogout }) {
             onBack={() => navigateTo('courses', 'courses')}
             onSelectLesson={handleSelectLessonFromCourse}
             onContinueLearning={(c) => handleStartCourse(c, 'continue')}
+            onPaymentSuccess={(c) => {
+              courseService.clearMyLearningCache()
+              fetchPurchasedCourse()
+              navigateTo('courses', 'courses', '', { replace: true })
+            }}
           />
         ) : activeView === 'test' ? (
           <CourseLearningView

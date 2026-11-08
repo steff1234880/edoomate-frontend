@@ -122,9 +122,137 @@ function avatarProxyPlugin() {
   }
 }
 
+// Custom server proxy middleware for Vimeo API Playback authorization
+function vimeoPlaybackProxyPlugin() {
+  return {
+    name: 'vimeo-playback-proxy',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const vimeoMatch = req.url.match(/^\/api\/vimeo\/playback\/(\d+)/i)
+        if (vimeoMatch) {
+          const vimeoId = vimeoMatch[1]
+          const parsedUrl = new URL(req.url, 'http://localhost')
+          const queryHash = parsedUrl.searchParams.get('h') || parsedUrl.searchParams.get('hash')
+          const vimeoToken = process.env.VIMEO_ACCESS_TOKEN || process.env.VITE_VIMEO_ACCESS_TOKEN || null
+          const defaultHash = process.env.VIMEO_HASH_KEY || queryHash || null
+
+          try {
+            // 1. If Vimeo Access Token is available, query official Vimeo API securely on server side
+            if (vimeoToken) {
+              const upstreamRes = await fetch(`https://api.vimeo.com/videos/${vimeoId}`, {
+                headers: {
+                  'Authorization': `Bearer ${vimeoToken}`,
+                  'Accept': 'application/vnd.vimeo.*+json;version=3.4',
+                  'User-Agent': 'Edoomate-Learning-Platform/1.0',
+                },
+              })
+
+              if (upstreamRes.ok) {
+                const data = await upstreamRes.json()
+                const files = data.files || []
+                const progressive =
+                  files.find((f) => f.type === 'video/mp4' && (f.quality === '720p' || f.public_name === '720p')) ||
+                  files.find((f) => f.type === 'video/mp4' && (f.quality === '1080p' || f.public_name === '1080p')) ||
+                  files.find((f) => f.type === 'video/mp4') ||
+                  files[0]
+
+                let hash = null
+                if (data.link && /\/([a-zA-Z0-9]+)$/.test(data.link)) {
+                  hash = data.link.match(/\/([a-zA-Z0-9]+)$/)[1]
+                }
+
+                res.setHeader('Content-Type', 'application/json')
+                res.setHeader('Access-Control-Allow-Origin', '*')
+                res.statusCode = 200
+                res.end(
+                  JSON.stringify({
+                    success: true,
+                    vimeo_id: vimeoId,
+                    playback_url: progressive?.link || null,
+                    hls_url: files.find((f) => f.quality === 'hls')?.link || null,
+                    embed_url: data.player_embed_url || null,
+                    vimeo_hash: hash || defaultHash,
+                    title: data.name,
+                    duration: data.duration,
+                  })
+                )
+                return
+              }
+            }
+
+            // 2. Query Vimeo Player config with hash parameter
+            const configUrl = defaultHash
+              ? `https://player.vimeo.com/video/${vimeoId}/config?h=${encodeURIComponent(defaultHash)}`
+              : `https://player.vimeo.com/video/${vimeoId}/config`
+
+            const configRes = await fetch(configUrl, {
+              headers: {
+                'Referer': 'https://edoomate.myieltspartner.com/',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              },
+            })
+
+            if (configRes.ok) {
+              const cfg = await configRes.json()
+              const files = cfg.request?.files?.progressive || []
+              const progressive =
+                files.find((f) => f.quality === '720p') ||
+                files.find((f) => f.quality === '1080p') ||
+                files[0]
+
+              res.setHeader('Content-Type', 'application/json')
+              res.setHeader('Access-Control-Allow-Origin', '*')
+              res.statusCode = 200
+              res.end(
+                JSON.stringify({
+                  success: true,
+                  vimeo_id: vimeoId,
+                  playback_url: progressive?.url || null,
+                  hls_url: cfg.request?.files?.hls?.default_cdn ? cfg.request?.files?.hls?.cdns?.[cfg.request.files.hls.default_cdn]?.url : null,
+                  embed_url: `https://player.vimeo.com/video/${vimeoId}${defaultHash ? `?h=${defaultHash}` : ''}`,
+                  vimeo_hash: defaultHash,
+                  title: cfg.video?.title,
+                  duration: cfg.video?.duration,
+                })
+              )
+              return
+            }
+
+            // Return diagnostic failure without exposing secrets
+            res.statusCode = 403
+            res.setHeader('Content-Type', 'application/json')
+            res.end(
+              JSON.stringify({
+                success: false,
+                vimeo_id: vimeoId,
+                error: 'Vimeo Privacy Restriction',
+                message: 'This video is unlisted or domain-restricted. A valid VIMEO_HASH_KEY or VIMEO_ACCESS_TOKEN with video_files permission is required on the backend.',
+              })
+            )
+            return
+          } catch (err) {
+            res.statusCode = 502
+            res.setHeader('Content-Type', 'application/json')
+            res.end(
+              JSON.stringify({
+                success: false,
+                vimeo_id: vimeoId,
+                error: 'Proxy Error',
+                message: err.message,
+              })
+            )
+            return
+          }
+        }
+        next()
+      })
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), avatarProxyPlugin()],
+  plugins: [react(), avatarProxyPlugin(), vimeoPlaybackProxyPlugin()],
   server: {
     allowedHosts: [
       '.trycloudflare.com',

@@ -187,8 +187,13 @@ export default function CourseLearningView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDedicatedTestRoute, urlTestId])
 
-  // Interactive Content Tabs: 'materials', 'resources', 'topics'
-  const [activeTab, setActiveTab] = useState(() => (['materials', 'resources', 'topics'].includes(urlTab) ? urlTab : 'materials'))
+  // Interactive Content Tabs: 'avatar', 'test', 'resources', 'video'
+  const [activeTab, setActiveTab] = useState(() => {
+    if (urlTab === 'test') return 'test'
+    if (urlTab === 'resources') return 'resources'
+    if (urlTab === 'video' || urlTab === 'topics') return 'video'
+    return 'avatar'
+  })
   const [toastMessage, setToastMessage] = useState('')
   const [isMobileCurriculumOpen, setIsMobileCurriculumOpen] = useState(false)
 
@@ -2772,28 +2777,42 @@ export default function CourseLearningView({
                     </div>
                   </div>
 
-                  {/* 2. Tabs: Lesson Materials (default), Resources, Topics */}
+                  {/* Four Tabs in exact reference order: 1. Avatar Lesson, 2. Test, 3. Resources, 4. Video Lesson */}
                   <ul className="lesson-underline-tabs">
                     <li className="lesson-underline-tab-item">
                       <button
                         type="button"
-                        className={`lesson-underline-tab-btn ${activeTab === 'materials' ? 'active' : ''}`}
+                        className={`lesson-underline-tab-btn ${activeTab === 'avatar' && !isDedicatedTest ? 'active' : ''}`}
                         onClick={() => {
-                          setActiveTab('materials')
+                          setActiveTab('avatar')
                           setIsTakingTest(false)
-                          updateUrlParams({ tab: 'materials', mode: null, testId: null })
+                          updateUrlParams({ tab: 'avatar', mode: null, testId: null })
                         }}
-                        id="tab-lesson-materials"
+                        id="tab-lesson-avatar"
                       >
-                        Lesson Materials
+                        Avatar Lesson
                       </button>
                     </li>
                     <li className="lesson-underline-tab-item">
                       <button
                         type="button"
-                        className={`lesson-underline-tab-btn ${activeTab === 'resources' ? 'active' : ''}`}
+                        className={`lesson-underline-tab-btn ${(activeTab === 'test' || isDedicatedTest) ? 'active' : ''}`}
+                        onClick={() => {
+                          setActiveTab('test')
+                          updateUrlParams({ tab: 'test', mode: null })
+                        }}
+                        id="tab-lesson-test"
+                      >
+                        Test
+                      </button>
+                    </li>
+                    <li className="lesson-underline-tab-item">
+                      <button
+                        type="button"
+                        className={`lesson-underline-tab-btn ${activeTab === 'resources' && !isDedicatedTest ? 'active' : ''}`}
                         onClick={() => {
                           setActiveTab('resources')
+                          setIsTakingTest(false)
                           updateUrlParams({ tab: 'resources', mode: null, testId: null })
                         }}
                         id="tab-lesson-resources"
@@ -2804,14 +2823,15 @@ export default function CourseLearningView({
                     <li className="lesson-underline-tab-item">
                       <button
                         type="button"
-                        className={`lesson-underline-tab-btn ${activeTab === 'topics' ? 'active' : ''}`}
+                        className={`lesson-underline-tab-btn ${activeTab === 'video' && !isDedicatedTest ? 'active' : ''}`}
                         onClick={() => {
-                          setActiveTab('topics')
-                          updateUrlParams({ tab: 'topics', mode: null, testId: null })
+                          setActiveTab('video')
+                          setIsTakingTest(false)
+                          updateUrlParams({ tab: 'video', mode: null, testId: null })
                         }}
-                        id="tab-lesson-topics"
+                        id="tab-lesson-video"
                       >
-                        Topics
+                        Video Lesson
                       </button>
                     </li>
                   </ul>
@@ -2820,11 +2840,127 @@ export default function CourseLearningView({
 
               {/* Tab Contents */}
               <div className="tab-content pt-2">
-                {/* TAB 1: LESSON MATERIALS (Exact screenshot cards + assessment runner) */}
-                {(activeTab === 'materials' || isDedicatedTest) && (
+                {/* TAB 1: AVATAR LESSON */}
+                {((activeTab === 'avatar' && !isDedicatedTest) || (!['test', 'resources', 'video'].includes(activeTab) && !isDedicatedTest)) && (
                   <div className="animate-fade-in d-flex flex-column gap-3">
-                    {/* Lesson Materials Cards (Matching Reference Screenshot) */}
-                    <div className={`animate-fade-in ${isDedicatedTest ? 'd-none' : ''}`}>
+                    <div className="animate-fade-in">
+                      {(() => {
+                        const avatarItems = (lessonTopics && lessonTopics.length > 0)
+                          ? lessonTopics.map((topic, idx) => ({
+                              id: topic.id || `topic-avatar-${idx}`,
+                              title: topic.title || `Topic ${idx + 1}`,
+                              raw: topic,
+                              order: topic.order || idx + 1,
+                              thumbnailUrl: topic.thumbnail_url || null,
+                              isTopic: true,
+                            }))
+                          : (currentLesson?.topics && currentLesson.topics.length > 0)
+                          ? currentLesson.topics.map((t, idx) => ({
+                              id: t.element_id || t.id || `lesson-topic-${idx}`,
+                              title: t.title || `Topic ${idx + 1}`,
+                              raw: t,
+                              order: t.order || idx + 1,
+                              thumbnailUrl: t.thumbnail_image_url || t.thumbnail_url || null,
+                              isTopic: true,
+                            }))
+                          : [
+                              {
+                                id: currentLesson?.id || 'avatar-lesson-main',
+                                title: currentLesson?.title || 'Avatar Lesson',
+                                raw: currentLesson,
+                                order: 1,
+                                thumbnailUrl: currentLesson?.imageUrl || null,
+                                isTopic: false,
+                              },
+                            ]
+
+                        return (
+                          <div className="d-flex flex-column gap-1">
+                            {avatarItems.map((item, idx) => (
+                              <div
+                                key={item.id || idx}
+                                className="lesson-material-card"
+                                onClick={() => {
+                                  if (item.isTopic) {
+                                    handleOpenAvatarTopic(item.raw)
+                                  } else {
+                                    handleOpenAvatarTopic(item.raw || currentLesson)
+                                  }
+                                }}
+                                id={`avatar-lesson-card-${idx}`}
+                              >
+                                {/* Left Square Thumbnail Box */}
+                                <div className="lesson-material-thumb-box">
+                                  {item.thumbnailUrl ? (
+                                    <img
+                                      src={item.thumbnailUrl}
+                                      alt={item.title}
+                                      className="lesson-material-thumb-img"
+                                      onError={(e) => {
+                                        e.currentTarget.style.display = 'none'
+                                        if (e.currentTarget.nextSibling) {
+                                          e.currentTarget.nextSibling.style.display = 'block'
+                                        }
+                                      }}
+                                    />
+                                  ) : null}
+                                  <svg
+                                    className="lesson-material-thumb-icon"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="1.8"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    style={{ display: item.thumbnailUrl ? 'none' : 'block' }}
+                                  >
+                                    <rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect>
+                                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                    <polyline points="21 15 16 10 5 21"></polyline>
+                                  </svg>
+                                </div>
+
+                                {/* Right Meta (bullet + type) and Title */}
+                                <div className="min-w-0 flex-grow-1">
+                                  <div className="lesson-material-meta d-flex align-items-center justify-content-between">
+                                    <div className="d-flex align-items-center gap-1.5">
+                                      <span className="lesson-material-bullet"></span>
+                                      <span>Avatar Lesson : {item.order || idx + 1}</span>
+                                    </div>
+                                  </div>
+                                  <h4 className="lesson-material-title">
+                                    {item.title}
+                                  </h4>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })()}
+
+                      {/* Lesson study overview collapsed below materials */}
+                      {currentLesson?.description && (
+                        <div className="mt-3 p-3 bg-light rounded-3 border">
+                          <div className="fw-semibold small text-dark mb-1">📖 Lesson Description</div>
+                          <div
+                            className="text-muted smaller"
+                            style={{ lineHeight: '1.6' }}
+                            dangerouslySetInnerHTML={{
+                              __html: currentLesson.description,
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: TEST */}
+                {(activeTab === 'test' || isDedicatedTest) && (
+                  <div className="animate-fade-in d-flex flex-column gap-3">
+                    {/* Test items list when not currently running a test */}
+                    {!isTakingTest && !isDedicatedTest && (
+                      <div className="animate-fade-in">
                         {(() => {
                           const testItems = (currentLesson?.tests || []).map((t) => {
                             const isActive = courseService.isMcqActive(t)
@@ -2839,43 +2975,13 @@ export default function CourseLearningView({
                             }
                           })
 
-                          const videoItems = (currentLesson?.videos || []).map((v) => ({
-                            id: v.element_id || v.id,
-                            type: 'video',
-                            title: v.title || currentLesson?.title || 'Video Lecture',
-                            thumbnailUrl: v.thumbnail_url || currentLesson?.imageUrl || null,
-                            raw: v,
-                          }))
-
-                          // If lesson has real video URL but not in videos array
-                          const hasRealVideo = Boolean(currentLesson?.videoUrl || currentLesson?.vimeoId);
-                          if (hasRealVideo && videoItems.length === 0) {
-                            videoItems.push({
-                              id: 'video-main',
-                              type: 'video',
-                              title: currentLesson?.title || 'Video Lecture',
-                              thumbnailUrl: currentLesson?.imageUrl || course?.thumbnail || null,
-                              raw: currentLesson,
-                            })
-                          }
-
-                          const readableItems = (currentLesson?.readables || []).map((r) => ({
-                            id: r.element_id || r.id,
-                            type: 'document',
-                            title: r.title || 'Lesson Reading Document',
-                            thumbnailUrl: r.thumbnail_image_url || r.thumbnail_url || null,
-                            raw: r,
-                          }))
-
-                          const allMaterials = [...testItems, ...videoItems, ...readableItems]
-
-                          if (allMaterials.length === 0) {
+                          if (testItems.length === 0) {
                             return (
                               <div className="p-4 border rounded-4 bg-light text-center text-muted small">
-                                <div className="fs-3 mb-2">📚</div>
-                                <div className="fw-semibold text-secondary mb-1">No Materials Linked for this Lesson</div>
+                                <div className="fs-3 mb-2">⚡</div>
+                                <div className="fw-semibold text-secondary mb-1">No Tests Linked for this Lesson</div>
                                 <p className="mb-0 text-muted">
-                                  Check the Resources and Topics tabs for supplementary study notes.
+                                  Check other lessons or units for practice quizzes and tests.
                                 </p>
                               </div>
                             )
@@ -2883,74 +2989,63 @@ export default function CourseLearningView({
 
                           return (
                             <div className="d-flex flex-column gap-1">
-                              {allMaterials.map((item, idx) => {
-                                const isItemDisabled = item.type === 'test' && item.isActive === false
+                              {testItems.map((item, idx) => {
+                                const isItemDisabled = item.isActive === false
                                 return (
-                                <div
-                                  key={item.id || idx}
-                                  className={`lesson-material-card ${
-                                    item.type === 'test' && String(activeTestId) === String(item.id) ? 'active-material' : ''
-                                  } ${isItemDisabled ? 'opacity-50' : ''}`}
-                                  style={{
-                                    cursor: isItemDisabled ? 'not-allowed' : 'pointer',
-                                    backgroundColor: isItemDisabled ? '#f1f5f9' : undefined,
-                                  }}
-                                  onClick={() => {
-                                    if (item.type === 'test') {
+                                  <div
+                                    key={item.id || idx}
+                                    className={`lesson-material-card ${isItemDisabled ? 'opacity-50' : ''}`}
+                                    style={{
+                                      cursor: isItemDisabled ? 'not-allowed' : 'pointer',
+                                      backgroundColor: isItemDisabled ? '#f1f5f9' : undefined,
+                                    }}
+                                    onClick={() => {
                                       if (isItemDisabled) {
                                         showToast('⚠️ This MCQ test is inactive and cannot be accessed.')
                                         return
                                       }
                                       handleOpenTest(item.id)
-                                    } else if (item.type === 'video') {
-                                      handleOpenVideo(item)
-                                    } else if (item.type === 'document') {
-                                      setActiveTab('resources')
-                                    }
-                                  }}
-                                  id={`lesson-material-card-${idx}`}
-                                  title={isItemDisabled ? 'This MCQ test is inactive and cannot be accessed.' : undefined}
-                                  aria-disabled={isItemDisabled}
-                                >
-                                  {/* Left Square Thumbnail Box */}
-                                  <div className="lesson-material-thumb-box">
-                                    {item.thumbnailUrl ? (
-                                      <img
-                                        src={item.thumbnailUrl}
-                                        alt={item.title}
-                                        className="lesson-material-thumb-img"
-                                        onError={(e) => {
-                                          e.currentTarget.style.display = 'none'
-                                          if (e.currentTarget.nextSibling) {
-                                            e.currentTarget.nextSibling.style.display = 'block'
-                                          }
-                                        }}
-                                      />
-                                    ) : null}
-                                    <svg
-                                      className="lesson-material-thumb-icon"
-                                      viewBox="0 0 24 24"
-                                      fill="none"
-                                      stroke="currentColor"
-                                      strokeWidth="1.8"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      style={{ display: item.thumbnailUrl ? 'none' : 'block' }}
-                                    >
-                                      <rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect>
-                                      <circle cx="8.5" cy="8.5" r="1.5"></circle>
-                                      <polyline points="21 15 16 10 5 21"></polyline>
-                                    </svg>
-                                  </div>
+                                    }}
+                                    id={`lesson-test-card-${idx}`}
+                                    title={isItemDisabled ? 'This MCQ test is inactive and cannot be accessed.' : undefined}
+                                    aria-disabled={isItemDisabled}
+                                  >
+                                    <div className="lesson-material-thumb-box">
+                                      {item.thumbnailUrl ? (
+                                        <img
+                                          src={item.thumbnailUrl}
+                                          alt={item.title}
+                                          className="lesson-material-thumb-img"
+                                          onError={(e) => {
+                                            e.currentTarget.style.display = 'none'
+                                            if (e.currentTarget.nextSibling) {
+                                              e.currentTarget.nextSibling.style.display = 'block'
+                                            }
+                                          }}
+                                        />
+                                      ) : null}
+                                      <svg
+                                        className="lesson-material-thumb-icon"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="1.8"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        style={{ display: item.thumbnailUrl ? 'none' : 'block' }}
+                                      >
+                                        <rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect>
+                                        <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                        <polyline points="21 15 16 10 5 21"></polyline>
+                                      </svg>
+                                    </div>
 
-                                  {/* Right Meta (bullet + type) and Title */}
-                                  <div className="min-w-0 flex-grow-1">
-                                    <div className="lesson-material-meta d-flex align-items-center justify-content-between">
-                                      <div className="d-flex align-items-center gap-1.5">
-                                        <span className="lesson-material-bullet"></span>
-                                        <span>{item.type}</span>
-                                      </div>
-                                      {item.type === 'test' && (
+                                    <div className="min-w-0 flex-grow-1">
+                                      <div className="lesson-material-meta d-flex align-items-center justify-content-between">
+                                        <div className="d-flex align-items-center gap-1.5">
+                                          <span className="lesson-material-bullet"></span>
+                                          <span>Test : {idx + 1}</span>
+                                        </div>
                                         <span
                                           className={`badge rounded-pill px-2 py-0.5 ${
                                             item.isActive ? 'bg-success-subtle text-success border border-success-subtle' : 'bg-secondary-subtle text-secondary border border-secondary-subtle'
@@ -2959,32 +3054,19 @@ export default function CourseLearningView({
                                         >
                                           {item.isActive ? 'ACTIVE' : 'INACTIVE'}
                                         </span>
-                                      )}
+                                      </div>
+                                      <h4 className="lesson-material-title">
+                                        {item.title}
+                                      </h4>
                                     </div>
-                                    <h4 className="lesson-material-title">
-                                      {item.title}
-                                    </h4>
                                   </div>
-                                </div>
-                              )})}
+                                )
+                              })}
                             </div>
                           )
                         })()}
-
-                        {/* Lesson study overview collapsed below materials */}
-                        {currentLesson?.description && (
-                          <div className="mt-3 p-3 bg-light rounded-3 border">
-                            <div className="fw-semibold small text-dark mb-1">📖 Lesson Description</div>
-                            <div
-                              className="text-muted smaller"
-                              style={{ lineHeight: '1.6' }}
-                              dangerouslySetInnerHTML={{
-                                __html: currentLesson.description,
-                              }}
-                            />
-                          </div>
-                        )}
                       </div>
+                    )}
 
                     {/* Integrated MCQ / Test Section inside Lesson Materials */}
                     <div className="mcq-integrated-section" style={{ display: isDedicatedTest && isTakingTest ? 'block' : 'none' }}>
@@ -3877,124 +3959,117 @@ export default function CourseLearningView({
                   </div>
                 )}
 
-                {/* TAB 3: TOPICS (Real backend topics associated with this lesson) */}
-                {activeTab === 'topics' && (
-                  <div className="animate-fade-in">
-                    <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-                      <div>
-                        <h5 className="fw-bold fs-6 mb-1 text-dark">Lesson Topics & Learning Units</h5>
-                        <p className="text-muted small mb-0">
-                          Curriculum topics and core competencies covered within this lesson.
-                        </p>
-                      </div>
-                    </div>
+                {/* TAB 4: VIDEO LESSON */}
+                {(activeTab === 'video' || activeTab === 'topics') && (
+                  <div className="animate-fade-in d-flex flex-column gap-3">
+                    {(() => {
+                      const videoItems = (currentLesson?.videos || []).map((v) => ({
+                        id: v.element_id || v.id,
+                        type: 'video',
+                        title: v.title || currentLesson?.title || 'Video Lecture',
+                        thumbnailUrl: v.thumbnail_url || currentLesson?.imageUrl || null,
+                        vimeoId: v.vimeo_id || v.vimeoId,
+                        vimeoHash: v.vimeo_hash || v.hash,
+                        videoUrl: v.video_url || v.stream_url || v.url,
+                        raw: v,
+                      }))
 
-                    {/* Topics Loading State */}
-                    {isLoadingTopics && (
-                      <div className="text-center py-4 bg-light rounded-3 border">
-                        <div className="spinner-border spinner-border-sm text-primary mb-2" role="status">
-                          <span className="visually-hidden">Loading topics...</span>
-                        </div>
-                        <div className="small text-muted">Fetching topics from Edoomate server...</div>
-                      </div>
-                    )}
+                      // Also include any topic videos
+                      ;(lessonTopics || []).forEach((top, tIdx) => {
+                        if (top.vimeoId || (top.video_url && top.video_url.includes('vimeo.com'))) {
+                          videoItems.push({
+                            id: top.id || `topic-video-${tIdx}`,
+                            type: 'video',
+                            title: top.title || `Topic ${tIdx + 1} Video`,
+                            thumbnailUrl: top.thumbnail_url || null,
+                            vimeoId: top.vimeoId,
+                            vimeoHash: top.vimeoHash,
+                            videoUrl: top.video_url,
+                            raw: top,
+                            sourceTab: 'video',
+                          })
+                        }
+                      })
 
-                    {/* Topics Error State */}
-                    {!isLoadingTopics && topicsError && (
-                      <div className="alert alert-warning rounded-3 small p-3 mb-3">
-                        ⚠️ {topicsError}
-                      </div>
-                    )}
+                      // If lesson has real video URL but not in videos array
+                      const hasRealVideo = Boolean(currentLesson?.videoUrl || currentLesson?.vimeoId)
+                      if (hasRealVideo && videoItems.length === 0) {
+                        videoItems.push({
+                          id: 'video-main',
+                          type: 'video',
+                          title: currentLesson?.title || 'Video Lecture',
+                          thumbnailUrl: currentLesson?.imageUrl || course?.thumbnail || null,
+                          vimeoId: currentLesson?.vimeoId,
+                          vimeoHash: currentLesson?.vimeoHash,
+                          videoUrl: currentLesson?.videoUrl,
+                          raw: currentLesson,
+                        })
+                      }
 
-                    {/* Topics List */}
-                    {!isLoadingTopics && lessonTopics.length > 0 && (
-                      <div className="d-flex flex-column gap-3">
-                        {lessonTopics.map((topic, tIdx) => (
-                          <div
-                            key={topic.id || tIdx}
-                            className="p-3 border rounded-3 bg-white shadow-xs d-flex flex-wrap align-items-center justify-content-between gap-3"
-                          >
-                            <div className="d-flex align-items-start gap-3 min-w-0" style={{ maxWidth: '80%' }}>
-                              <span
-                                className="rounded-circle bg-primary bg-opacity-10 text-primary fw-bold d-inline-flex align-items-center justify-content-center flex-shrink-0"
-                                style={{ width: '36px', height: '36px', fontSize: '0.85rem' }}
-                              >
-                                {topic.order || tIdx + 1}
-                              </span>
-                              <div className="min-w-0">
-                                <div className="fw-semibold small text-dark mb-1">
-                                  {topic.title}
+                      if (videoItems.length === 0) {
+                        return (
+                          <div className="p-4 border rounded-4 bg-light text-center text-muted small">
+                            <div className="fs-3 mb-2">🎥</div>
+                            <div className="fw-semibold text-secondary mb-1">No Video Lessons Linked for this Lesson</div>
+                            <p className="mb-0 text-muted">
+                              Check other tabs for interactive avatar lessons, tests, and study resources.
+                            </p>
+                          </div>
+                        )
+                      }
+
+                      return (
+                        <div className="d-flex flex-column gap-1">
+                          {videoItems.map((item, idx) => (
+                            <div
+                              key={item.id || idx}
+                              className="lesson-material-card"
+                              onClick={() => handleOpenVideo(item)}
+                              id={`lesson-video-card-${idx}`}
+                            >
+                              <div className="lesson-material-thumb-box">
+                                {item.thumbnailUrl ? (
+                                  <img
+                                    src={item.thumbnailUrl}
+                                    alt={item.title}
+                                    className="lesson-material-thumb-img"
+                                    onError={(e) => {
+                                      e.currentTarget.style.display = 'none'
+                                      if (e.currentTarget.nextSibling) {
+                                        e.currentTarget.nextSibling.style.display = 'block'
+                                      }
+                                    }}
+                                  />
+                                ) : null}
+                                <svg
+                                  className="lesson-material-thumb-icon"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.8"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  style={{ display: item.thumbnailUrl ? 'none' : 'block' }}
+                                >
+                                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                </svg>
+                              </div>
+                              <div className="min-w-0 flex-grow-1">
+                                <div className="lesson-material-meta d-flex align-items-center justify-content-between">
+                                  <div className="d-flex align-items-center gap-1.5">
+                                    <span className="lesson-material-bullet"></span>
+                                    <span>Video Lesson : {idx + 1}</span>
+                                  </div>
                                 </div>
-                                <p className="text-muted smaller mb-2" style={{ fontSize: '0.78rem', lineHeight: '1.4' }}>
-                                  {topic.description}
-                                </p>
-                                <div className="d-flex align-items-center gap-2 flex-wrap">
-                                  {topic.subject && (
-                                    <span className="badge bg-light text-secondary border rounded-pill px-2 py-0-5 smaller">
-                                      {topic.subject}
-                                    </span>
-                                  )}
-                                  {topic.grade && (
-                                    <span className="badge bg-light text-secondary border rounded-pill px-2 py-0-5 smaller">
-                                      Grade {topic.grade}
-                                    </span>
-                                  )}
-                                  <span className="badge bg-secondary bg-opacity-10 text-secondary rounded-pill px-2 py-0-5 smaller">
-                                    Topic #{topic.order || tIdx + 1}
-                                  </span>
-                                </div>
+                                <h4 className="lesson-material-title">
+                                  {item.title}
+                                </h4>
                               </div>
                             </div>
-
-                            {/* Topic Action Button: Vimeo / Video Resource or Interactive Avatar */}
-                            {topic.vimeoId || (topic.video_url && topic.video_url.includes('vimeo.com')) ? (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleOpenVideo({
-                                    id: topic.id || `topic-vimeo-${tIdx}`,
-                                    title: topic.title || 'Topic Vimeo Video',
-                                    vimeoId: topic.vimeoId,
-                                    vimeoHash: topic.vimeoHash,
-                                    videoUrl: topic.video_url,
-                                    sourceTab: 'topics',
-                                    raw: topic,
-                                  })
-                                }
-                                className="btn btn-sm btn-primary rounded-pill px-3 fw-semibold d-inline-flex align-items-center gap-1.5"
-                                title="Play Topic Video Resource"
-                              >
-                                <span>▶</span>
-                                <span>Watch Video</span>
-                              </button>
-                            ) : topic.avatar_link ? (
-                              <button
-                                type="button"
-                                onClick={() => handleOpenAvatarTopic(topic)}
-                                className="btn btn-sm btn-outline-primary rounded-pill px-3 fw-semibold d-inline-flex align-items-center gap-1.5"
-                                title="Play Topic Lecture in video player"
-                              >
-                                <span>▶</span>
-                                <span>Play Lecture</span>
-                              </button>
-                            ) : (
-                              <span className="badge bg-success bg-opacity-10 text-success rounded-pill px-3 py-1 small">
-                                Verified Curriculum Topic
-                              </span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Topics Empty State */}
-                    {!isLoadingTopics && (!lessonTopics || lessonTopics.length === 0) && (
-                      <div className="p-4 border rounded-3 bg-light text-center text-muted small">
-                        <div className="fs-4 mb-2">🎯</div>
-                        <div className="fw-semibold text-secondary mb-1">No Topics Listed for this Lesson</div>
-                        <span>There are no explicit sub-topics registered under this lesson in the syllabus.</span>
-                      </div>
-                    )}
+                          ))}
+                        </div>
+                      )
+                    })()}
                   </div>
                 )}
               </div>
