@@ -885,7 +885,16 @@ export default function VideoLessonPage() {
                 <div className="d-flex flex-column align-items-center justify-content-center text-center p-4 p-sm-5 text-white bg-dark rounded-4 h-100" style={{ minHeight: '360px', background: 'linear-gradient(135deg, #0a0a1a 0%, #1e1b4b 100%)' }}>
                   <div className="spinner-border text-primary mb-3" role="status"></div>
                   <h5 className="fw-bold text-white mb-2">Connecting to Avatar Lecture...</h5>
-                  <p className="text-white-50 small mb-0">Initializing 3D model, teaching scripts and audio synchronization.</p>
+                  <p className="text-white-50 small mb-3">Initializing 3D model, teaching scripts and audio synchronization.</p>
+                  <a
+                    href={videoData.avatarLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-sm btn-outline-info rounded-pill px-3 py-1.5"
+                    style={{ fontSize: '0.825rem' }}
+                  >
+                    Open Avatar Lecture Directly ↗
+                  </a>
                 </div>
               ) : (
                 <div className="d-flex flex-column align-items-center justify-content-center text-center p-5 text-white" style={{ minHeight: '360px' }}>

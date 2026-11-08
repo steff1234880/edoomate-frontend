@@ -1243,7 +1243,18 @@ export const courseService = {
     if (!avatarTopicId) return null
     const cleanUuid = String(avatarTopicId).trim()
     return _cachedFetch(`avatar_def:${cleanUuid}`, async () => {
-      // 1. First try the local proxy route /api/avatar/topic/:id
+      // 1. Static bundled definition (instant, production-ready, zero CORS issues on Render)
+      try {
+        const staticRes = await fetch(`/data/avatar/${cleanUuid}.json`)
+        if (staticRes.ok) {
+          const staticData = await staticRes.json()
+          if (staticData && (staticData.topic || staticData.scripts)) return staticData
+        }
+      } catch (staticErr) {
+        // Fall through to live providers
+      }
+
+      // 2. First try the local proxy route /api/avatar/topic/:id (active in dev server)
       try {
         const headers = { 'Accept': 'application/json' }
         if (token) headers['Authorization'] = `Bearer ${token}`
@@ -1256,7 +1267,7 @@ export const courseService = {
         console.warn('Local proxy /api/avatar/topic note:', e.message)
       }
 
-      // 2. Direct fallback (for production domains or non-Vite environments)
+      // 3. Direct provider fetch fallback
       try {
         const res = await fetch(`https://my-avatar.in/api/topic/${cleanUuid}`, {
           headers: { 'Accept': 'application/json' },

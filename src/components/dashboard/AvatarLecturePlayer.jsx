@@ -719,7 +719,11 @@ export default function AvatarLecturePlayer({
 
         // If provider returned speech audio and lip-sync blendshapes for the answer, play it through avatar
         if (response.tts_audio) {
-          const answerAudioUrl = `/api/avatar/audio?url=${encodeURIComponent(response.tts_audio)}`
+          const rawAudio = response.tts_audio
+          const isLocal = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+          const answerAudioUrl = isLocal
+            ? `/api/avatar/audio?url=${encodeURIComponent(rawAudio)}`
+            : (rawAudio.startsWith('http') ? rawAudio : `https://my-avatar.in${rawAudio.startsWith('/') ? rawAudio : `/${rawAudio}`}`)
           const answerAudio = new Audio(answerAudioUrl)
           activeAnswerAudioRef.current = answerAudio
 
@@ -790,7 +794,17 @@ export default function AvatarLecturePlayer({
 
   const getAudioUrl = () => {
     if (!currentScript?.tts_audio) return null
-    return `/api/avatar/audio?url=${encodeURIComponent(currentScript.tts_audio)}`
+    const audioPath = currentScript.tts_audio
+    // In production or when local proxy is not available, stream directly from provider or relative url
+    if (audioPath.startsWith('http://') || audioPath.startsWith('https://')) {
+      return audioPath
+    }
+    const cleanPath = audioPath.startsWith('/') ? audioPath : `/${audioPath}`
+    // If running in development with proxy, use proxy; otherwise direct from provider
+    if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+      return `/api/avatar/audio?url=${encodeURIComponent(cleanPath)}`
+    }
+    return `https://my-avatar.in${cleanPath}`
   }
 
   return (
