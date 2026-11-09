@@ -368,7 +368,7 @@ export default function VideoLessonPage() {
           resolvedVimeoHash = knownHashes[resolvedVimeoId]
         }
 
-        // Fetch authorized playback details (progressive MP4 / HLS) via backend API or proxy
+        // Fetch authorized playback details (progressive MP4 / HLS) directly from Vimeo API
         let playbackInfo = null
         if (resolvedVimeoId) {
           try {
@@ -376,8 +376,16 @@ export default function VideoLessonPage() {
             if (playbackInfo?.vimeo_hash && !resolvedVimeoHash) {
               resolvedVimeoHash = playbackInfo.vimeo_hash
             }
+            if (playbackInfo && !playbackInfo.success && !playbackInfo.playback_url) {
+              if (isMounted) {
+                setError(playbackInfo.message || 'Unable to load authorized video stream. Please check Vimeo API access.')
+              }
+            }
           } catch (pErr) {
             console.warn('Playback details query note:', pErr.message)
+            if (isMounted) {
+              setError(pErr.message || 'Unable to connect to Vimeo API for video playback.')
+            }
           }
         }
 
@@ -830,16 +838,29 @@ export default function VideoLessonPage() {
                   />
                 </div>
               ) : videoData.vimeoId ? (
-                <div className="ratio ratio-16x9 w-100 h-100">
-                  <iframe
-                    ref={vimeoIframeRef}
-                    src={constructVimeoEmbedUrl()}
-                    title={videoData.title}
-                    allow="autoplay; fullscreen; picture-in-picture; clipboard-write; encrypted-media; web-share"
-                    allowFullScreen
-                    className="w-100 h-100 border-0"
-                    referrerPolicy="strict-origin-when-cross-origin"
-                  />
+                <div className="d-flex flex-column align-items-center justify-content-center text-center p-4 p-sm-5 text-white bg-dark rounded-4 h-100" style={{ minHeight: '360px' }}>
+                  <div className="fs-1 mb-2">⚠️</div>
+                  <h5 className="fw-bold text-white mb-2">Vimeo Playback Stream Unavailable</h5>
+                  <p className="text-white-50 small mb-3" style={{ maxWidth: '480px' }}>
+                    Direct progressive MP4 or HLS stream could not be loaded from Vimeo API for video ID <code>{videoData.vimeoId}</code>.
+                    Please verify that <code>VITE_VIMEO_ACCESS_TOKEN</code> is configured in Render environment variables.
+                  </p>
+                  <div className="d-flex gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-primary rounded-pill px-4 fw-semibold"
+                      onClick={() => window.location.reload()}
+                    >
+                      Retry
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-light rounded-pill px-4"
+                      onClick={handleBack}
+                    >
+                      Return to Topics
+                    </button>
+                  </div>
                 </div>
               ) : (avatarDefinition || videoData.avatarDefinition) ? (
                 <AvatarLecturePlayer

@@ -1475,7 +1475,7 @@ export const courseService = {
         (typeof process !== 'undefined' && (process.env?.VITE_VIMEO_ACCESS_TOKEN || process.env?.VIMEO_ACCESS_TOKEN)) ||
         null
 
-      // 1. Replicate Flutter VimeoPlayerV2: Direct call to https://api.vimeo.com/videos/{videoId}
+      // 1. Direct Vimeo API access (matching Flutter VimeoPlayerV2): GET https://api.vimeo.com/videos/{videoId}
       if (vimeoAccessToken) {
         try {
           const vimeoRes = await fetch(`https://api.vimeo.com/videos/${cleanId}`, {
@@ -1487,7 +1487,7 @@ export const courseService = {
 
           if (vimeoRes.ok) {
             const data = await vimeoRes.json()
-            
+
             // Extract from data.play.progressive or data.files
             const progressiveList =
               data?.play?.progressive ||
@@ -1538,10 +1538,32 @@ export const courseService = {
                 title: data.name,
                 duration: data.duration,
               }
+            } else {
+              return {
+                success: false,
+                vimeo_id: cleanId,
+                error: 'NO_PLAYABLE_STREAM',
+                message: 'No progressive MP4 or HLS playback stream found in Vimeo API response for this video.',
+              }
+            }
+          } else {
+            const errData = await vimeoRes.json().catch(() => null)
+            const errMsg = errData?.error || errData?.message || `Vimeo API HTTP ${vimeoRes.status}`
+            return {
+              success: false,
+              vimeo_id: cleanId,
+              error: `VIMEO_API_${vimeoRes.status}`,
+              message: `Vimeo API error (${vimeoRes.status}): ${errMsg}`,
             }
           }
         } catch (vimeoErr) {
           console.warn('Vimeo direct API fetch note:', vimeoErr.message)
+          return {
+            success: false,
+            vimeo_id: cleanId,
+            error: 'NETWORK_ERROR',
+            message: `Failed to connect to Vimeo API: ${vimeoErr.message}`,
+          }
         }
       }
 
@@ -1561,7 +1583,7 @@ export const courseService = {
         // Backend endpoint not deployed yet
       }
 
-      // 2. Try proxy endpoint /api/vimeo/playback/:id
+      // 3. Try Vite dev server proxy endpoint /api/vimeo/playback/:id
       try {
         const hashQuery = vimeoHash ? `?h=${encodeURIComponent(vimeoHash)}` : ''
         const res = await fetch(`/api/vimeo/playback/${cleanId}${hashQuery}`)
@@ -1573,7 +1595,7 @@ export const courseService = {
         }
       } catch (e) {}
 
-      // 3. Direct Vimeo player config resolution if hash is provided
+      // 4. Fallback: Direct Vimeo player config resolution if hash is provided
       if (vimeoHash) {
         try {
           const cfgRes = await fetch(`https://player.vimeo.com/video/${cleanId}/config?h=${encodeURIComponent(vimeoHash)}`, {
@@ -1599,16 +1621,14 @@ export const courseService = {
             }
           }
         } catch (e) {}
-
-        return {
-          success: true,
-          vimeo_id: cleanId,
-          vimeo_hash: vimeoHash,
-          embed_url: `https://player.vimeo.com/video/${cleanId}?h=${encodeURIComponent(vimeoHash)}&autoplay=0&title=0&byline=0&portrait=0`,
-        }
       }
 
-      return null
+      return {
+        success: false,
+        vimeo_id: cleanId,
+        error: 'VIMEO_AUTH_REQUIRED',
+        message: 'Direct Vimeo stream could not be loaded. Please ensure VITE_VIMEO_ACCESS_TOKEN is configured in Render environment variables.',
+      }
     }, CONTENT_CACHE_TTL_MS)
   },
 
