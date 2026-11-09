@@ -219,8 +219,8 @@ export default function VideoLessonPage() {
               if (topicInfo.numericId) resolvedVimeoId = topicInfo.numericId
               if (topicInfo.hash) resolvedVimeoHash = topicInfo.hash
 
-              // Fetch Avatar 3D & script definition via proxy if avatar_topic_id exists
-              const aTopicId = topicObj.avatar_topic_id || (topicObj.avatar_link && topicObj.avatar_link.split('/player/')[1])
+              // Fetch Avatar 3D & script definition if avatar_topic_id exists
+              const aTopicId = topicObj.avatar_topic_id || (topicObj.avatar_link && topicObj.avatar_link.split('/player/')[1]) || (resolvedAvatarLink && resolvedAvatarLink.split('/player/')[1])
               if (aTopicId) {
                 try {
                   fetchedAvatarDef = await courseService.getAvatarTopicDefinition(aTopicId, token)
@@ -231,6 +231,18 @@ export default function VideoLessonPage() {
             }
           } catch (tErr) {
             console.warn('getTopicDetails API fetch note:', tErr.message)
+          }
+        }
+
+        // If avatar link was passed via query params or videoId/lesson, extract avatar topic id
+        if (!fetchedAvatarDef && resolvedAvatarLink && resolvedAvatarLink.includes('/player/')) {
+          const aTopicId = resolvedAvatarLink.split('/player/')[1]
+          if (aTopicId) {
+            try {
+              fetchedAvatarDef = await courseService.getAvatarTopicDefinition(aTopicId, token)
+            } catch (aErr) {
+              console.warn('Query avatar link getAvatarTopicDefinition note:', aErr.message)
+            }
           }
         }
 
@@ -904,18 +916,23 @@ export default function VideoLessonPage() {
                 />
               ) : videoData.avatarLink ? (
                 <div className="d-flex flex-column align-items-center justify-content-center text-center p-4 p-sm-5 text-white bg-dark rounded-4 h-100" style={{ minHeight: '360px', background: 'linear-gradient(135deg, #0a0a1a 0%, #1e1b4b 100%)' }}>
-                  <div className="spinner-border text-primary mb-3" role="status"></div>
-                  <h5 className="fw-bold text-white mb-2">Connecting to Avatar Lecture...</h5>
-                  <p className="text-white-50 small mb-3">Initializing 3D model, teaching scripts and audio synchronization.</p>
-                  <a
-                    href={videoData.avatarLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn btn-sm btn-outline-info rounded-pill px-3 py-1.5"
-                    style={{ fontSize: '0.825rem' }}
-                  >
-                    Open Avatar Lecture Directly ↗
-                  </a>
+                  <div className="fs-1 mb-2">⚠️</div>
+                  <h5 className="fw-bold text-white mb-2">Avatar Lecture Setup Unavailable</h5>
+                  <p className="text-white-50 small mb-3">The 3D model and lesson scripts could not be synchronized for this topic.</p>
+                  <div className="d-flex gap-2">
+                    <a
+                      href={videoData.avatarLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-sm btn-outline-info rounded-pill px-3 py-1.5"
+                      style={{ fontSize: '0.825rem' }}
+                    >
+                      Open Avatar Lecture Directly ↗
+                    </a>
+                    <button type="button" className="btn btn-sm btn-outline-light rounded-pill px-3" onClick={handleBack}>
+                      Return to Topics
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="d-flex flex-column align-items-center justify-content-center text-center p-5 text-white" style={{ minHeight: '360px' }}>

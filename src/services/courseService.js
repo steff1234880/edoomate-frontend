@@ -1280,7 +1280,26 @@ export const courseService = {
         console.warn('Direct provider fetch note:', err.message)
       }
 
-      return null
+      // 4. Default fallback: if this topic UUID has no definition file yet, provide default avatar lecture structure
+      // so 3D avatar initializes properly and speaks rather than getting permanently stuck
+      return {
+        topic: {
+          id: cleanUuid,
+          avatar_topic_id: cleanUuid,
+          topic: 'Interactive Avatar Lecture',
+          description: 'Official interactive avatar lesson.',
+          glb_path: '/avatars/girlavatar2_work_1773839349705.glb',
+        },
+        scripts: [
+          {
+            id: 1,
+            topic_id: cleanUuid,
+            content: 'Welcome to this interactive avatar lesson! Let us explore the key concepts together.',
+            tts_audio: '/speech-znrdt.mp3',
+            tts_json: [],
+          },
+        ],
+      }
     }, CONTENT_CACHE_TTL_MS)
   },
 
