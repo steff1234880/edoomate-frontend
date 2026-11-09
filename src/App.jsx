@@ -47,7 +47,7 @@ export default function App() {
       const queryString = hash.includes('?') ? '?' + hash.split('?')[1] : ''
 
       if (['dashboard', 'analytics', 'explore', 'search', 'courses', 'course-details', 'leaderboard', 'achievements', 'profile', 'learning', 'settings', 'notifications', 'profile-setup', 'assessment', 'privacy-policy', 'privacy', 'terms', 'terms-conditions', 'terms-and-conditions', 'video-lesson'].includes(cleanHash)) {
-        const targetPath = cleanHash === 'search' ? '/explore' : (cleanHash === 'privacy' ? '/privacy-policy' : (cleanHash === 'terms' || cleanHash === 'terms-and-conditions' ? '/terms-conditions' : `/${cleanHash}`))
+        const targetPath = cleanHash === 'search' ? '/explore' : (cleanHash === 'privacy' ? '/privacy-policy' : (cleanHash === 'terms' || cleanHash === 'terms-conditions' ? '/terms-and-conditions' : `/${cleanHash}`))
         navigate(`${targetPath}${queryString}`, { replace: true })
       } else if (cleanHash === 'login' || cleanHash === 'signup' || cleanHash === 'register') {
         navigate(`/${cleanHash}${queryString}`, { replace: true })
@@ -273,16 +273,16 @@ export default function App() {
           element={<Navigate to="/privacy-policy" replace />}
         />
         <Route
+          path="/terms-and-conditions"
+          element={<TermsConditionsPage />}
+        />
+        <Route
           path="/terms-conditions"
           element={<TermsConditionsPage />}
         />
         <Route
           path="/terms"
-          element={<Navigate to="/terms-conditions" replace />}
-        />
-        <Route
-          path="/terms-and-conditions"
-          element={<Navigate to="/terms-conditions" replace />}
+          element={<Navigate to="/terms-and-conditions" replace />}
         />
 
         {/* Catch-all Fallback */}
