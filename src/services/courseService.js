@@ -1470,10 +1470,19 @@ export const courseService = {
 
     return _cachedFetch(`vimeo_playback:${cleanId}:${vimeoHash || ''}`, async () => {
       // Check for Vimeo Access Token in frontend environment variables
-      const vimeoAccessToken =
+      const rawVimeoToken =
         (typeof import.meta !== 'undefined' && import.meta.env?.VITE_VIMEO_ACCESS_TOKEN) ||
         (typeof process !== 'undefined' && (process.env?.VITE_VIMEO_ACCESS_TOKEN || process.env?.VIMEO_ACCESS_TOKEN)) ||
         null
+
+      // Sanitize and ensure clean Bearer token format (strip quotes, extra spaces, and redundant "Bearer " prefixes)
+      let vimeoAccessToken = null
+      if (rawVimeoToken && typeof rawVimeoToken === 'string') {
+        const cleaned = rawVimeoToken.trim().replace(/^["']|["']$/g, '').trim()
+        if (cleaned) {
+          vimeoAccessToken = cleaned.replace(/^Bearer\s+/i, '').trim()
+        }
+      }
 
       // 1. Direct Vimeo API access (matching Flutter VimeoPlayerV2): GET https://api.vimeo.com/videos/{videoId}
       if (vimeoAccessToken) {
