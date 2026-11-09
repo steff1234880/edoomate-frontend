@@ -803,7 +803,7 @@ export default function VideoLessonPage() {
               style={
                 isFullscreen
                   ? { minHeight: '100vh', maxHeight: '100vh', height: '100vh', zIndex: 99999 }
-                  : { minHeight: '360px', maxHeight: '620px' }
+                  : { aspectRatio: '16 / 9', maxHeight: '70vh' }
               }
             >
               {videoData.playbackUrl ? (

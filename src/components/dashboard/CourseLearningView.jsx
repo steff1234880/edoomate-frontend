@@ -2425,7 +2425,7 @@ export default function CourseLearningView({
                   className="learning-player-card rounded-4 overflow-hidden shadow-sm bg-dark position-relative text-white mb-3"
                   id="learning-video-container"
                 >
-                  <div className="learning-video-inner position-relative bg-black w-100 d-flex align-items-center justify-content-center" style={{ minHeight: '340px', maxHeight: '520px' }}>
+                  <div className="learning-video-inner position-relative bg-black w-100 d-flex align-items-center justify-content-center" style={{ aspectRatio: '16 / 9', maxHeight: '70vh' }}>
                     {/* Video Loading State */}
                     {(isVideoLoading || isVideoPageLoading) && (
                       <div className="position-absolute top-50 start-50 translate-middle text-center" style={{ zIndex: 12 }}>
@@ -2460,7 +2460,7 @@ export default function CourseLearningView({
 
                     {/* Vimeo Embed or HTML5 Video */}
                     {activeVideoData.vimeoId || (activeVideoData.videoUrl && activeVideoData.videoUrl.includes('vimeo.com')) ? (
-                      <div className="ratio ratio-16x9 w-100 h-100" style={{ maxHeight: '480px' }}>
+                      <div className="ratio ratio-16x9 w-100 h-100">
                         <iframe
                           ref={vimeoIframeRef}
                           src={
@@ -2493,7 +2493,6 @@ export default function CourseLearningView({
                           poster={activeVideoData.thumbnailUrl || undefined}
                           className="w-100 h-100 d-block"
                           style={{
-                            maxHeight: '480px',
                             objectFit: 'contain',
                             backgroundColor: '#000',
                           }}
