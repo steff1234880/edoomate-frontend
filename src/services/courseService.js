@@ -831,15 +831,51 @@ export const courseService = {
   },
 
   /**
+   * Invalidate cached lesson data to ensure fresh fetch from backend API
+   * @param {string|number} lessonId
+   */
+  invalidateLessonCache(lessonId) {
+    if (lessonId) {
+      const cleanId = String(lessonId).replace(/^lesson-/, '').trim()
+      _cache.delete(`lesson:${cleanId}`)
+      _cache.delete(`lesson:${lessonId}`)
+    }
+  },
+
+  /**
+   * Invalidate unit cache to ensure updated curriculum is loaded
+   * @param {string|number} unitId
+   */
+  invalidateUnitCache(unitId) {
+    if (unitId) {
+      const cleanId = String(unitId).replace(/^unit-/, "").trim()
+      _cache.delete(`unit:${cleanId}`)
+      _cache.delete(`unit:${unitId}`)
+    }
+  },
+
+  /**
+   * Invalidate all curriculum and lesson caches for a course
+   */
+  invalidateCurriculumCache() {
+    for (const key of _cache.keys()) {
+      if (key.startsWith("lesson:") || key.startsWith("unit:") || key.startsWith("course:")) {
+        _cache.delete(key)
+      }
+    }
+  },
+
+  /**
    * Fetch lesson details by ID (authenticated if token provided)
    * Endpoint: GET /api/lesson/{id}
    */
   async getLessonDetails(lessonId, token = null) {
-    return _cachedFetch(`lesson:${lessonId}`, async () => {
+    const cleanId = String(lessonId).replace(/^lesson-/, '').trim()
+    return _cachedFetch(`lesson:${cleanId}`, async () => {
       try {
         const headers = { 'Accept': 'application/json' }
         if (token) headers['Authorization'] = `Bearer ${token}`
-        const response = await fetch(`${API_BASE_URL}/lesson/${lessonId}`, { method: 'GET', headers })
+        const response = await fetch(`${API_BASE_URL}/lesson/${cleanId}`, { method: 'GET', headers })
         if (!response.ok) return null
         const data = await response.json()
         return data?.data || null
@@ -2095,11 +2131,20 @@ export const courseService = {
 
           const hasVideoContent = Boolean(resolvedVideoUrl || resolvedVimeoId || videos.length > 0)
 
+          const isLessonCompleted = Boolean(lessonDetail?.lesson_details?.is_completed)
+          const isLessonLocked = Boolean(lessonDetail?.lesson_details?.is_locked)
+          const isLessonUnlocked = lessonDetail?.lesson_details?.is_unlocked !== undefined
+            ? Boolean(lessonDetail.lesson_details.is_unlocked)
+            : !isLessonLocked
+
           return {
             id: `lesson-${lessonId || `${unitData.id}-${lIdx + 1}`}`,
             elementId: lessonId,
             lessonId,
             title: l.title || lessonDetail?.lesson_name || `Lesson ${lIdx + 1}`,
+            is_completed: isLessonCompleted,
+            is_locked: isLessonLocked,
+            is_unlocked: isLessonUnlocked,
             duration:
               lessonDetail?.lesson_details?.duration ||
               lessonDetail?.duration ||
@@ -2134,16 +2179,7 @@ export const courseService = {
             topics,
             videos,
             readables,
-            resources: l.lesson_image_url
-              ? [
-                  {
-                    id: `res-${l.id}`,
-                    title: `${l.title} Study Material Image`,
-                    url: l.lesson_image_url,
-                    type: 'image',
-                  },
-                ]
-              : [],
+            resources: [],
           }
         })
 
@@ -3155,7 +3191,7 @@ export const courseService = {
       })
       const data = await response.json().catch(() => null)
       if (typeof window !== 'undefined' && data?.success) {
-        window.dispatchEvent(new CustomEvent('edoomate_analytics_updated', { detail: { type: 'topic_watched', courseId, topicId } }))
+        window.dispatchEvent(new CustomEvent('edoomate_analytics_updated', { detail: { type: 'video_watched', courseId, videoId } }))
       }
       return data
     } catch (e) {

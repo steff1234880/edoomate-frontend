@@ -501,16 +501,30 @@ export default function VideoLessonPage() {
         }
       })
 
-      player.on('ended', () => {
+      player.on('ended', async () => {
         if (isDisposed) return
         setIsPlaying(false)
+        const token = authService.getToken()
+        if (token && courseId && (videoId || videoData?.id) && typeof courseService.recordVideoWatch === 'function') {
+          await courseService.recordVideoWatch({ courseId, videoId: videoId || videoData?.id, duration: 1 }, token).catch(() => {})
+        }
+        if (lessonId) {
+          courseService.invalidateLessonCache(lessonId)
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('edoomate_lesson_completed', {
+              detail: { courseId, lessonId, videoId: videoId || videoData?.id },
+            })
+          )
+        }
         if (courseId) {
           courseService.saveStoredProgress(courseId, {
-            videoId: videoData.id,
+            videoId: videoData?.id || videoId,
             topicId: topicId || null,
             lastLessonId: lessonId || null,
             videoTimestamp: 0,
-          }, authService.getToken())
+          }, token)
         }
       })
 
@@ -836,15 +850,29 @@ export default function VideoLessonPage() {
                         e.currentTarget.currentTime = resumeTimeRef.current
                       }
                     }}
-                    onEnded={() => {
+                    onEnded={async () => {
                       setIsPlaying(false)
+                      const token = authService.getToken()
+                      if (token && courseId && (videoId || videoData?.id) && typeof courseService.recordVideoWatch === 'function') {
+                        await courseService.recordVideoWatch({ courseId, videoId: videoId || videoData?.id, duration: 1 }, token).catch(() => {})
+                      }
+                      if (lessonId) {
+                        courseService.invalidateLessonCache(lessonId)
+                      }
+                      if (typeof window !== 'undefined') {
+                        window.dispatchEvent(
+                          new CustomEvent('edoomate_lesson_completed', {
+                            detail: { courseId, lessonId, videoId: videoId || videoData?.id },
+                          })
+                        )
+                      }
                       if (courseId) {
                         courseService.saveStoredProgress(courseId, {
-                          videoId: videoData.id,
+                          videoId: videoData?.id || videoId,
                           topicId: topicId || null,
                           lastLessonId: lessonId || null,
                           videoTimestamp: 0,
-                        }, authService.getToken())
+                        }, token)
                       }
                     }}
                   />
@@ -896,10 +924,20 @@ export default function VideoLessonPage() {
                       }, token)
                     }
                   }}
-                  onComplete={() => {
+                  onComplete={async () => {
                     const token = authService.getToken()
                     if (token && courseId && topicId && typeof courseService.recordTopicWatch === 'function') {
-                      courseService.recordTopicWatch({ courseId, topicId }, token).catch(() => {})
+                      await courseService.recordTopicWatch({ courseId, topicId }, token).catch(() => {})
+                    }
+                    if (lessonId) {
+                      courseService.invalidateLessonCache(lessonId)
+                    }
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(
+                        new CustomEvent('edoomate_lesson_completed', {
+                          detail: { courseId, lessonId, topicId },
+                        })
+                      )
                     }
                     if (courseId) {
                       courseService.saveStoredProgress(courseId, {

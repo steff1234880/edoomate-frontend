@@ -203,6 +203,7 @@ export default function CourseLearningView({
 
   // Dedicated Video Learning Page States
   const [activeVideoData, setActiveVideoData] = useState(null)
+  const [currentLessonDetail, setCurrentLessonDetail] = useState(null)
   const [isVideoPageLoading, setIsVideoPageLoading] = useState(false)
   const [videoPageError, setVideoPageError] = useState(null)
   const [testError, setTestError] = useState(null)
@@ -263,11 +264,39 @@ export default function CourseLearningView({
   const [activeInlineResource, setActiveInlineResource] = useState(null) // { title, url, type }
 
   // Open a resource inside the Edoomate inline viewer instead of navigating away
-  const handleOpenResource = (res) => {
+  const handleOpenResource = async (res) => {
+    const isLocked = (res?.is_locked === true || res?.is_unlocked === false) && !res?.is_completed
+    if (isLocked) {
+      showToast('🔒 This resource is locked. Complete the previous lesson to unlock.')
+      return
+    }
+
     const rawUrl = res?.url || res?.pdf_url
     if (!rawUrl) return
     setActiveInlineResource({ title: res.title || 'Resource', url: rawUrl, type: res.type || res.readable_type || '' })
     window.scrollTo({ top: 0, behavior: 'smooth' })
+
+    // Record readable watch completion on backend API
+    const token = authService.getToken()
+    const readableId = res.element_id || res.id
+    if (token && courseId && readableId && typeof courseService.recordReadableWatch === 'function') {
+      try {
+        await courseService.recordReadableWatch({ courseId, readableId }, token)
+        const cleanLId = currentLesson?.lessonId || currentLesson?.elementId || (currentLesson?.id ? String(currentLesson.id).replace(/^lesson-/, '').trim() : null)
+        if (cleanLId) {
+          courseService.invalidateLessonCache(cleanLId)
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('edoomate_lesson_completed', {
+              detail: { courseId, lessonId: cleanLId, readableId },
+            })
+          )
+        }
+      } catch (e) {
+        console.warn('recordReadableWatch error:', e)
+      }
+    }
   }
 
   // Close the inline resource viewer and return to the resources tab
@@ -277,6 +306,15 @@ export default function CourseLearningView({
 
   // Open Native Avatar Lecture inside the internal dedicated video lesson page
   const handleOpenAvatarTopic = async (topic) => {
+    // Check locked status from backend API
+    const isTopicLocked = topic?.is_locked === true || topic?.raw?.is_locked === true || (topic?.is_unlocked === false) || (topic?.raw?.is_unlocked === false)
+    const isTopicCompleted = Boolean(topic?.is_completed || topic?.raw?.is_completed)
+
+    if (isTopicLocked && !isTopicCompleted) {
+      showToast('🔒 This lesson is locked. Complete the previous lesson to unlock.')
+      return
+    }
+
     // Record topic watch progress on backend API
     const token = authService.getToken()
     if (topic?.id && token) {
@@ -303,6 +341,7 @@ export default function CourseLearningView({
   const [lessonTopics, setLessonTopics] = useState([])
   const [isLoadingTopics, setIsLoadingTopics] = useState(false)
   const [topicsError, setTopicsError] = useState(null)
+  const [curriculumRefreshTrigger, setCurriculumRefreshTrigger] = useState(0)
 
   // Trigger temporary feedback toast
   const showToast = (msg) => {
@@ -370,7 +409,7 @@ export default function CourseLearningView({
         Boolean(course?.course_link_details)
 
       // 1. Fetch from API if it's an API course or has course_link_details
-      if (isApiCourse && (!course?.modules || course.modules.length === 0)) {
+      if (isApiCourse) {
         try {
           const token = authService.getToken()
           const apiData = await courseService.loadFullCourseCurriculum(courseId, token)
@@ -519,7 +558,7 @@ export default function CourseLearningView({
       isMounted = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courseId, action, initialLessonId, urlLessonId])
+  }, [courseId, action, initialLessonId, urlLessonId, curriculumRefreshTrigger])
 
   // Flattened list of all lessons in sequence
   const allLessons = modules.flatMap((m) =>
@@ -933,6 +972,17 @@ export default function CourseLearningView({
       } else {
         showToast('🎉 Test submitted successfully! Results loaded.')
       }
+      const cleanLId = currentLesson?.lessonId || currentLesson?.elementId || (currentLesson?.id ? String(currentLesson.id).replace(/^lesson-/, '').trim() : null)
+      if (cleanLId) {
+        courseService.invalidateLessonCache(cleanLId)
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('edoomate_lesson_completed', {
+            detail: { courseId, lessonId: cleanLId, testId: cleanTestId },
+          })
+        )
+      }
       if (currentLesson?.id && !completedLessonIds.includes(currentLesson.id)) {
         handleToggleComplete(currentLesson.id)
       }
@@ -1001,6 +1051,13 @@ export default function CourseLearningView({
   // Handle opening dedicated Video Lesson page when user clicks a Topic video or video material
   const handleOpenVideo = async (videoItem) => {
     if (!videoItem) return
+
+    // Check backend lock status
+    const isLocked = (videoItem.is_locked === true || videoItem.is_unlocked === false) && !videoItem.is_completed
+    if (isLocked) {
+      showToast('🔒 This video lesson is locked. Complete the previous lesson to unlock.')
+      return
+    }
 
     const isTopic =
       videoItem.sourceTab === 'topics' ||
@@ -1088,6 +1145,20 @@ export default function CourseLearningView({
   // Handle opening a specific test when user clicks a test card
   const handleOpenTest = async (testId) => {
     if (!testId) return
+
+    // Check backend lock status from lesson_link_details
+    const freshLinks = currentLessonDetail?.lesson_link_details || []
+    const cleanTId = String(testId).replace(/^test-/, '')
+    const matchedLink = freshLinks.find(
+      (el) => String(el.element_id) === cleanTId && (el.element_type === 'test' || el.element_type === 'mcq')
+    )
+    if (matchedLink) {
+      const isTestLocked = (matchedLink.is_locked === true || matchedLink.is_unlocked === false) && !matchedLink.is_completed
+      if (isTestLocked) {
+        showToast('🔒 This test is locked. Complete the previous lesson to unlock.')
+        return
+      }
+    }
 
     // Pre-check if current lesson has this test and if it is inactive
     const matchedTest = (currentLesson?.tests || []).find(
@@ -1614,7 +1685,22 @@ export default function CourseLearningView({
 
       try {
         const token = authService.getToken()
+        const currentCleanLessonId = currentLesson?.lessonId || currentLesson?.elementId || (currentLesson?.id ? String(currentLesson.id).replace(/^lesson-/, '').trim() : null)
+        let freshLinks = []
+        if (currentCleanLessonId) {
+          try {
+            const freshL = await courseService.getLessonDetails(currentCleanLessonId, token)
+            freshLinks = freshL?.lesson_link_details || []
+          } catch {}
+        }
+
         const resourcePromises = readables.map(async (r) => {
+          const matchedLink = freshLinks.find(
+            (el) => (String(el.element_id) === String(r.element_id) || String(el.element_id) === String(r.id)) && el.element_type === 'readable'
+          ) || r
+          const isCompleted = Boolean(matchedLink.is_completed)
+          const isLocked = Boolean(matchedLink.is_locked)
+          const isUnlocked = matchedLink.is_unlocked !== undefined ? Boolean(matchedLink.is_unlocked) : !isLocked
           try {
             const detail = await courseService.getReadableDetails(r.element_id, token)
             // Extract nested PDF URLs and section details
@@ -1639,6 +1725,10 @@ export default function CourseLearningView({
               pdf_title: pdfItem?.pdf_title || 'Document.pdf',
               url: pdfItem?.pdf_url || null,
               thumbnail_url: r.thumbnail_image_url || r.thumbnail_url || null,
+              is_completed: isCompleted,
+              is_locked: isLocked,
+              is_unlocked: isUnlocked,
+              raw: matchedLink,
             }
           } catch (e) {
             return {
@@ -1671,7 +1761,30 @@ export default function CourseLearningView({
     return () => {
       isCancelled = true
     }
-  }, [currentLesson?.id, currentLesson?.lessonId])
+  }, [currentLesson?.id, currentLesson?.lessonId, curriculumRefreshTrigger])
+
+  // Fetch fresh Lesson Details (GET /api/lesson/{id}) whenever current lesson changes or refreshed
+  useEffect(() => {
+    let isCancelled = false
+    async function fetchLessonData() {
+      const cleanLId = currentLesson?.lessonId || currentLesson?.elementId || (currentLesson?.id ? String(currentLesson.id).replace(/^lesson-/, '').trim() : null)
+      if (!cleanLId) {
+        if (!isCancelled) setCurrentLessonDetail(null)
+        return
+      }
+      try {
+        const token = authService.getToken()
+        const detail = await courseService.getLessonDetails(cleanLId, token)
+        if (!isCancelled) {
+          setCurrentLessonDetail(detail)
+        }
+      } catch (err) {
+        console.warn('Could not fetch fresh lesson details:', err)
+      }
+    }
+    fetchLessonData()
+    return () => { isCancelled = true }
+  }, [currentLesson?.id, currentLesson?.lessonId, currentLesson?.elementId, curriculumRefreshTrigger])
 
   // Fetch real Topics from backend (GET /api/topic/{id}) whenever current lesson changes
   useEffect(() => {
@@ -1692,9 +1805,33 @@ export default function CourseLearningView({
 
       try {
         const token = authService.getToken()
+
+        // Fetch fresh lesson details to read real-time is_completed, is_locked, is_unlocked from lesson_link_details
+        let freshLessonDetail = null
+        const currentCleanLessonId = currentLesson?.lessonId || currentLesson?.elementId || (currentLesson?.id ? String(currentLesson.id).replace(/^lesson-/, '').trim() : null)
+        if (currentCleanLessonId) {
+          try {
+            freshLessonDetail = await courseService.getLessonDetails(currentCleanLessonId, token)
+          } catch (lErr) {
+            console.warn('Could not refresh lesson details for topics:', lErr)
+          }
+        }
+        const freshLinks = freshLessonDetail?.lesson_link_details || []
+
         const topicPromises = topicLinks.map(async (t, idx) => {
           try {
             const detail = await courseService.getTopicDetails(t.element_id, token)
+
+            // Match element in fresh lesson_link_details
+            const matchedLink = freshLinks.find(
+              (el) => String(el.element_id) === String(t.element_id) && el.element_type === 'topic'
+            ) || t
+
+            const isTopicCompleted = Boolean(matchedLink.is_completed)
+            const isTopicLocked = Boolean(matchedLink.is_locked)
+            const isTopicUnlocked = matchedLink.is_unlocked !== undefined
+              ? Boolean(matchedLink.is_unlocked)
+              : !isTopicLocked
 
             // Extract any Vimeo video id, hash, or embed url strictly from this topic's attributes or links
             const { numericVimeoId, vimeoHash } = extractVimeoInfo(
@@ -1719,14 +1856,23 @@ export default function CourseLearningView({
               video_url: topicVideoUrl,
               thumbnail_url: t.thumbnail_image_url || t.thumbnail_url || null,
               rawDetail: detail,
+              is_completed: isTopicCompleted,
+              is_locked: isTopicLocked,
+              is_unlocked: isTopicUnlocked,
             }
           } catch (e) {
+            const matchedLink = freshLinks.find(
+              (el) => String(el.element_id) === String(t.element_id) && el.element_type === 'topic'
+            ) || t
             return {
               id: t.element_id || t.id,
               element_id: t.element_id,
               order: t.order || idx + 1,
               title: t.title || `Topic ${idx + 1}`,
               description: t.description || 'Topic concept.',
+              is_completed: Boolean(matchedLink.is_completed),
+              is_locked: Boolean(matchedLink.is_locked),
+              is_unlocked: matchedLink.is_unlocked !== undefined ? Boolean(matchedLink.is_unlocked) : !Boolean(matchedLink.is_locked),
             }
           }
         })
@@ -1751,7 +1897,7 @@ export default function CourseLearningView({
     return () => {
       isCancelled = true
     }
-  }, [currentLesson?.id, currentLesson?.lessonId])
+  }, [currentLesson?.id, currentLesson?.lessonId, curriculumRefreshTrigger])
 
   // Reset video playback state and loading/error when active lesson changes
   useEffect(() => {
@@ -1762,6 +1908,31 @@ export default function CourseLearningView({
     setCurrentTime(0)
     setDuration(0)
   }, [currentLesson?.id, currentLesson?.videoUrl, currentLesson?.vimeoId])
+
+  // Listen for real-time completion events (e.g. Avatar Lesson / topic watch completion)
+  // Re-calls the lesson API immediately to update unlock status and completed status without page reload
+  useEffect(() => {
+    const handleProgressUpdate = (e) => {
+      const { lessonId: completedLessonId, courseId: completedCourseId } = e?.detail || {}
+      if (completedCourseId && String(completedCourseId) !== String(courseId)) {
+        return
+      }
+
+      const targetLessonId = completedLessonId || currentLesson?.lessonId || currentLesson?.elementId || (currentLesson?.id ? String(currentLesson.id).replace(/^lesson-/, '').trim() : null)
+      if (targetLessonId) {
+        courseService.invalidateLessonCache(targetLessonId)
+      }
+      setCurriculumRefreshTrigger((prev) => prev + 1)
+    }
+
+    window.addEventListener('edoomate_lesson_completed', handleProgressUpdate)
+    window.addEventListener('edoomate_analytics_updated', handleProgressUpdate)
+
+    return () => {
+      window.removeEventListener('edoomate_lesson_completed', handleProgressUpdate)
+      window.removeEventListener('edoomate_analytics_updated', handleProgressUpdate)
+    }
+  }, [courseId, currentLesson?.id, currentLesson?.lessonId])
 
   // Calculate accurate course progress
   const totalLessonsCount = allLessons.length
@@ -1970,6 +2141,13 @@ export default function CourseLearningView({
 
   // Select an accessible lesson
   const handleSelectLesson = (lesson) => {
+    // Check if lesson is locked based on backend API progress
+    const isLessonLocked = (lesson?.is_locked === true || lesson?.is_unlocked === false) && !lesson?.is_completed && !completedLessonIds.includes(lesson.id)
+    if (isLessonLocked) {
+      showToast('🔒 This lesson is locked. Complete the previous lesson to unlock.')
+      return
+    }
+
     setActiveLessonId(lesson.id)
     setIsPlaying(false)
     setUserAnswers({})
@@ -1994,7 +2172,23 @@ export default function CourseLearningView({
   }
 
   // Toggle Lesson Completion
-  const handleToggleComplete = (lessonId) => {
+  const handleToggleComplete = async (lessonId) => {
+    const cleanLId = lessonId || currentLesson?.lessonId || currentLesson?.elementId || (currentLesson?.id ? String(currentLesson.id).replace(/^lesson-/, '').trim() : null)
+    const token = authService.getToken()
+    const activeVidId = activeVideoData?.id || (currentLesson?.videos && currentLesson.videos[0]?.element_id) || (currentLesson?.videos && currentLesson.videos[0]?.id)
+    if (token && courseId && activeVidId && typeof courseService.recordVideoWatch === 'function') {
+      await courseService.recordVideoWatch({ courseId, videoId: activeVidId, duration: 1 }, token).catch(() => {})
+    }
+    if (cleanLId) {
+      courseService.invalidateLessonCache(cleanLId)
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('edoomate_lesson_completed', {
+          detail: { courseId, lessonId: cleanLId, videoId: activeVidId },
+        })
+      )
+    }
     const idToToggle = lessonId || currentLesson?.id
     if (!idToToggle) return
 
@@ -2875,64 +3069,86 @@ export default function CourseLearningView({
 
                         return (
                           <div className="d-flex flex-column gap-1">
-                            {avatarItems.map((item, idx) => (
-                              <div
-                                key={item.id || idx}
-                                className="lesson-material-card"
-                                onClick={() => {
-                                  if (item.isTopic) {
-                                    handleOpenAvatarTopic(item.raw)
-                                  } else {
-                                    handleOpenAvatarTopic(item.raw || currentLesson)
-                                  }
-                                }}
-                                id={`avatar-lesson-card-${idx}`}
-                              >
-                                {/* Left Square Thumbnail Box */}
-                                <div className="lesson-material-thumb-box">
-                                  {item.thumbnailUrl ? (
-                                    <img
-                                      src={item.thumbnailUrl}
-                                      alt={item.title}
-                                      className="lesson-material-thumb-img"
-                                      onError={(e) => {
-                                        e.currentTarget.style.display = 'none'
-                                        if (e.currentTarget.nextSibling) {
-                                          e.currentTarget.nextSibling.style.display = 'block'
-                                        }
-                                      }}
-                                    />
-                                  ) : null}
-                                  <svg
-                                    className="lesson-material-thumb-icon"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="1.8"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    style={{ display: item.thumbnailUrl ? 'none' : 'block' }}
-                                  >
-                                    <rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect>
-                                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
-                                    <polyline points="21 15 16 10 5 21"></polyline>
-                                  </svg>
-                                </div>
+                            {avatarItems.map((item, idx) => {
+                              const isCompleted = Boolean(item.raw?.is_completed)
+                              const isLocked = (item.raw?.is_locked === true || item.raw?.is_unlocked === false) && !isCompleted
 
-                                {/* Right Meta (bullet + type) and Title */}
-                                <div className="min-w-0 flex-grow-1">
-                                  <div className="lesson-material-meta d-flex align-items-center justify-content-between">
-                                    <div className="d-flex align-items-center gap-1.5">
-                                      <span className="lesson-material-bullet"></span>
-                                      <span>Avatar Lesson : {item.order || idx + 1}</span>
-                                    </div>
+                              return (
+                                <div
+                                  key={item.id || idx}
+                                  className={`lesson-material-card ${isLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                  onClick={() => {
+                                    if (item.isTopic) {
+                                      handleOpenAvatarTopic(item.raw)
+                                    } else {
+                                      handleOpenAvatarTopic(item.raw || currentLesson)
+                                    }
+                                  }}
+                                  id={`avatar-lesson-card-${idx}`}
+                                  style={{
+                                    cursor: isLocked ? 'not-allowed' : 'pointer',
+                                    backgroundColor: isLocked ? '#f8fafc' : '#ffffff',
+                                  }}
+                                >
+                                  {/* Left Square Thumbnail Box */}
+                                  <div className="lesson-material-thumb-box position-relative">
+                                    {item.thumbnailUrl ? (
+                                      <img
+                                        src={item.thumbnailUrl}
+                                        alt={item.title}
+                                        className="lesson-material-thumb-img"
+                                        onError={(e) => {
+                                          e.currentTarget.style.display = 'none'
+                                          if (e.currentTarget.nextSibling) {
+                                            e.currentTarget.nextSibling.style.display = 'block'
+                                          }
+                                        }}
+                                      />
+                                    ) : null}
+                                    <svg
+                                      className="lesson-material-thumb-icon"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="1.8"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      style={{ display: item.thumbnailUrl ? 'none' : 'block' }}
+                                    >
+                                      <rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect>
+                                      <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                      <polyline points="21 15 16 10 5 21"></polyline>
+                                    </svg>
                                   </div>
-                                  <h4 className="lesson-material-title">
-                                    {item.title}
-                                  </h4>
+
+                                  {/* Right Meta (bullet + type) and Title */}
+                                  <div className="min-w-0 flex-grow-1">
+                                    <div className="lesson-material-meta d-flex align-items-center justify-content-between">
+                                      <div className="d-flex align-items-center gap-1.5">
+                                        <span className="lesson-material-bullet"></span>
+                                        <span>Avatar Lesson : {item.order || idx + 1}</span>
+                                      </div>
+                                      {isCompleted ? (
+                                        <span className="badge bg-success bg-opacity-10 text-success fw-semibold rounded-pill px-2 py-0-5" style={{ fontSize: '0.68rem' }}>
+                                          ✓ Completed
+                                        </span>
+                                      ) : isLocked ? (
+                                        <span className="badge bg-secondary bg-opacity-10 text-secondary fw-semibold rounded-pill px-2 py-0-5" style={{ fontSize: '0.68rem' }}>
+                                          🔒 Locked
+                                        </span>
+                                      ) : (
+                                        <span className="badge bg-primary bg-opacity-10 text-primary fw-semibold rounded-pill px-2 py-0-5" style={{ fontSize: '0.68rem' }}>
+                                          Unlocked
+                                        </span>
+                                      )}
+                                    </div>
+                                    <h4 className="lesson-material-title" style={{ color: isLocked ? '#64748b' : '#1e293b' }}>
+                                      {item.title}
+                                    </h4>
+                                  </div>
                                 </div>
-                              </div>
-                            ))}
+                              )
+                            })}
                           </div>
                         )
                       })()}
@@ -2961,16 +3177,27 @@ export default function CourseLearningView({
                     {!isTakingTest && !isDedicatedTest && (
                       <div className="animate-fade-in">
                         {(() => {
+                          const freshLinks = currentLessonDetail?.lesson_link_details || []
                           const testItems = (currentLesson?.tests || []).map((t) => {
                             const isActive = courseService.isMcqActive(t)
+                            const cleanTId = String(t.element_id || t.id).replace(/^test-/, '')
+                            const matchedLink = freshLinks.find(
+                              (el) => String(el.element_id) === cleanTId && (el.element_type === 'test' || el.element_type === 'mcq')
+                            ) || t
+                            const isCompleted = Boolean(matchedLink.is_completed)
+                            const isLocked = Boolean(matchedLink.is_locked)
+                            const isUnlocked = matchedLink.is_unlocked !== undefined ? Boolean(matchedLink.is_unlocked) : !isLocked
                             return {
                               id: t.element_id || t.id,
                               type: 'test',
                               title: t.title || 'Lesson Quiz / Test',
                               thumbnailUrl: t.thumbnail_url || t.thumbnail_image_url || null,
-                              raw: t,
+                              raw: matchedLink,
                               isActive,
-                              statusText: isActive ? 'Active' : 'Inactive',
+                              is_completed: isCompleted,
+                              is_locked: isLocked,
+                              is_unlocked: isUnlocked,
+                              statusText: isCompleted ? 'Completed' : isLocked ? 'Locked' : isActive ? 'Active' : 'Inactive',
                             }
                           })
 
@@ -2989,17 +3216,22 @@ export default function CourseLearningView({
                           return (
                             <div className="d-flex flex-column gap-1">
                               {testItems.map((item, idx) => {
-                                const isItemDisabled = item.isActive === false
+                                const isItemLocked = (item.is_locked === true || item.is_unlocked === false) && !item.is_completed
+                                const isItemDisabled = item.isActive === false || isItemLocked
                                 return (
                                   <div
                                     key={item.id || idx}
-                                    className={`lesson-material-card ${isItemDisabled ? 'opacity-50' : ''}`}
+                                    className={`lesson-material-card ${isItemDisabled ? 'opacity-60' : ''}`}
                                     style={{
                                       cursor: isItemDisabled ? 'not-allowed' : 'pointer',
-                                      backgroundColor: isItemDisabled ? '#f1f5f9' : undefined,
+                                      backgroundColor: isItemDisabled ? '#f8fafc' : undefined,
                                     }}
                                     onClick={() => {
-                                      if (isItemDisabled) {
+                                      if (isItemLocked) {
+                                        showToast('🔒 This test is locked. Complete the previous lesson to unlock.')
+                                        return
+                                      }
+                                      if (item.isActive === false) {
                                         showToast('⚠️ This MCQ test is inactive and cannot be accessed.')
                                         return
                                       }
@@ -3045,14 +3277,24 @@ export default function CourseLearningView({
                                           <span className="lesson-material-bullet"></span>
                                           <span>Test : {idx + 1}</span>
                                         </div>
-                                        <span
-                                          className={`badge rounded-pill px-2 py-0.5 ${
-                                            item.isActive ? 'bg-success-subtle text-success border border-success-subtle' : 'bg-secondary-subtle text-secondary border border-secondary-subtle'
-                                          }`}
-                                          style={{ fontSize: '0.65rem', fontWeight: 600 }}
-                                        >
-                                          {item.isActive ? 'ACTIVE' : 'INACTIVE'}
-                                        </span>
+                                        {item.is_completed ? (
+                                          <span className="badge rounded-pill px-2 py-0.5 bg-success-subtle text-success border border-success-subtle" style={{ fontSize: '0.65rem', fontWeight: 600 }}>
+                                            ✓ COMPLETED
+                                          </span>
+                                        ) : item.is_locked ? (
+                                          <span className="badge rounded-pill px-2 py-0.5 bg-secondary-subtle text-secondary border border-secondary-subtle" style={{ fontSize: '0.65rem', fontWeight: 600 }}>
+                                            🔒 LOCKED
+                                          </span>
+                                        ) : (
+                                          <span
+                                            className={`badge rounded-pill px-2 py-0.5 ${
+                                              item.isActive ? 'bg-success-subtle text-success border border-success-subtle' : 'bg-secondary-subtle text-secondary border border-secondary-subtle'
+                                            }`}
+                                            style={{ fontSize: '0.65rem', fontWeight: 600 }}
+                                          >
+                                            {item.isActive ? 'ACTIVE' : 'INACTIVE'}
+                                          </span>
+                                        )}
                                       </div>
                                       <h4 className="lesson-material-title">
                                         {item.title}
@@ -3893,9 +4135,9 @@ export default function CourseLearningView({
                               tabIndex={hasUrl ? 0 : undefined}
                               aria-label={hasUrl ? `Open ${res.title}` : undefined}
                               className={`p-3 border rounded-3 bg-white shadow-xs d-flex flex-wrap align-items-center justify-content-between gap-3 lesson-resource-card ${
-                                hasUrl ? 'lesson-resource-card-clickable' : ''
+                                (res.is_locked && !res.is_completed) ? 'opacity-60' : hasUrl ? 'lesson-resource-card-clickable' : ''
                               }`}
-                              style={{ cursor: hasUrl ? 'pointer' : 'default' }}
+                              style={{ cursor: (res.is_locked && !res.is_completed) ? 'not-allowed' : hasUrl ? 'pointer' : 'default' }}
                             >
                               <div className="d-flex align-items-start gap-3 min-w-0 lesson-resource-info">
                                 <span
@@ -3932,9 +4174,21 @@ export default function CourseLearningView({
                               </div>
 
                               {/* Resource Status Indicator */}
-                              {!hasUrl && (
+                              {res.is_completed ? (
+                                <span className="badge bg-success bg-opacity-10 text-success fw-semibold rounded-pill px-3 py-1.5 small">
+                                  ✓ Completed
+                                </span>
+                              ) : res.is_locked ? (
+                                <span className="badge bg-secondary bg-opacity-10 text-secondary fw-semibold rounded-pill px-3 py-1.5 small">
+                                  🔒 Locked
+                                </span>
+                              ) : !hasUrl ? (
                                 <span className="badge bg-secondary bg-opacity-10 text-secondary rounded-pill px-3 py-2 small lesson-resource-text-badge">
                                   Text Resource
+                                </span>
+                              ) : (
+                                <span className="badge bg-primary bg-opacity-10 text-primary fw-semibold rounded-pill px-3 py-1.5 small">
+                                  Unlocked
                                 </span>
                               )}
                             </div>
@@ -3962,16 +4216,29 @@ export default function CourseLearningView({
                 {(activeTab === 'video' || activeTab === 'topics') && (
                   <div className="animate-fade-in d-flex flex-column gap-3">
                     {(() => {
-                      const videoItems = (currentLesson?.videos || []).map((v) => ({
-                        id: v.element_id || v.id,
-                        type: 'video',
-                        title: v.title || currentLesson?.title || 'Video Lecture',
-                        thumbnailUrl: v.thumbnail_url || currentLesson?.imageUrl || null,
-                        vimeoId: v.vimeo_id || v.vimeoId,
-                        vimeoHash: v.vimeo_hash || v.hash,
-                        videoUrl: v.video_url || v.stream_url || v.url,
-                        raw: v,
-                      }))
+                      const freshLinks = currentLessonDetail?.lesson_link_details || []
+                      const videoItems = (currentLesson?.videos || []).map((v) => {
+                        const cleanVId = String(v.element_id || v.id)
+                        const matchedLink = freshLinks.find(
+                          (el) => String(el.element_id) === cleanVId && el.element_type === 'video'
+                        ) || v
+                        const isCompleted = Boolean(matchedLink.is_completed)
+                        const isLocked = Boolean(matchedLink.is_locked)
+                        const isUnlocked = matchedLink.is_unlocked !== undefined ? Boolean(matchedLink.is_unlocked) : !isLocked
+                        return {
+                          id: v.element_id || v.id,
+                          type: 'video',
+                          title: v.title || currentLesson?.title || 'Video Lecture',
+                          thumbnailUrl: v.thumbnail_url || currentLesson?.imageUrl || null,
+                          vimeoId: v.vimeo_id || v.vimeoId,
+                          vimeoHash: v.vimeo_hash || v.hash,
+                          videoUrl: v.video_url || v.stream_url || v.url,
+                          raw: matchedLink,
+                          is_completed: isCompleted,
+                          is_locked: isLocked,
+                          is_unlocked: isUnlocked,
+                        }
+                      })
 
                       // Also include any topic videos
                       ;(lessonTopics || []).forEach((top, tIdx) => {
@@ -4019,11 +4286,20 @@ export default function CourseLearningView({
 
                       return (
                         <div className="d-flex flex-column gap-1">
-                          {videoItems.map((item, idx) => (
+                          {videoItems.map((item, idx) => {
+                            const isItemLocked = (item.is_locked === true || item.is_unlocked === false) && !item.is_completed
+                            return (
                             <div
                               key={item.id || idx}
-                              className="lesson-material-card"
-                              onClick={() => handleOpenVideo(item)}
+                              className={`lesson-material-card ${isItemLocked ? 'opacity-60' : ''}`}
+                              style={{ cursor: isItemLocked ? 'not-allowed' : 'pointer' }}
+                              onClick={() => {
+                                if (isItemLocked) {
+                                  showToast('🔒 This video lesson is locked. Complete the previous lesson to unlock.')
+                                  return
+                                }
+                                handleOpenVideo(item)
+                              }}
                               id={`lesson-video-card-${idx}`}
                             >
                               <div className="lesson-material-thumb-box">
@@ -4059,13 +4335,26 @@ export default function CourseLearningView({
                                     <span className="lesson-material-bullet"></span>
                                     <span>Video Lesson : {idx + 1}</span>
                                   </div>
+                                  {item.is_completed ? (
+                                    <span className="badge bg-success bg-opacity-10 text-success fw-semibold rounded-pill px-2 py-0-5" style={{ fontSize: '0.68rem' }}>
+                                      ✓ Completed
+                                    </span>
+                                  ) : item.is_locked ? (
+                                    <span className="badge bg-secondary bg-opacity-10 text-secondary fw-semibold rounded-pill px-2 py-0-5" style={{ fontSize: '0.68rem' }}>
+                                      🔒 Locked
+                                    </span>
+                                  ) : (
+                                    <span className="badge bg-primary bg-opacity-10 text-primary fw-semibold rounded-pill px-2 py-0-5" style={{ fontSize: '0.68rem' }}>
+                                      Unlocked
+                                    </span>
+                                  )}
                                 </div>
                                 <h4 className="lesson-material-title">
                                   {item.title}
                                 </h4>
                               </div>
                             </div>
-                          ))}
+                          )})}
                         </div>
                       )
                     })()}
@@ -4166,20 +4455,23 @@ export default function CourseLearningView({
                           ) : (
                             moduleLessons.map((lesson, lIdx) => {
                               const isCurrent = lesson.id === activeLessonId
-                              const isDone = completedLessonIds.includes(lesson.id)
+                              const isDone = completedLessonIds.includes(lesson.id) || Boolean(lesson.is_completed)
+                              const isLocked = (lesson.is_locked === true || lesson.is_unlocked === false) && !isDone
 
                               return (
                                 <div
                                   key={lesson.id}
-                                  className={`lesson-curriculum-item p-2-5 px-3 rounded-3 d-flex align-items-center justify-content-between cursor-pointer gap-2 ${
+                                  className={`lesson-curriculum-item p-2-5 px-3 rounded-3 d-flex align-items-center justify-content-between gap-2 ${
                                     isCurrent
                                       ? 'bg-primary text-white shadow-sm'
                                       : isDone
                                       ? 'bg-light text-dark'
+                                      : isLocked
+                                      ? 'bg-light bg-opacity-60 text-secondary opacity-75'
                                       : 'bg-white text-dark border-light-subtle'
                                   }`}
                                   style={{
-                                    cursor: 'pointer',
+                                    cursor: isLocked ? 'not-allowed' : 'pointer',
                                     transition: 'all 0.18s ease',
                                     border: isCurrent ? '1px solid #2563eb' : '1px solid #edf2f7',
                                     minHeight: '52px',
@@ -4194,17 +4486,19 @@ export default function CourseLearningView({
                                           ? 'bg-white text-primary'
                                           : isDone
                                           ? 'bg-success text-white'
+                                          : isLocked
+                                          ? 'bg-secondary bg-opacity-15 text-secondary'
                                           : 'bg-secondary bg-opacity-25 text-secondary'
                                       }`}
                                       style={{ width: '24px', height: '24px', fontSize: '0.72rem' }}
                                     >
-                                      {isDone ? '✓' : lIdx + 1}
+                                      {isDone ? '✓' : isLocked ? '🔒' : lIdx + 1}
                                     </span>
 
                                     <div className="min-w-0 flex-grow-1 pe-1">
                                       <div
                                         className={`fw-semibold lesson-row-title ${
-                                          isCurrent ? 'text-white' : 'text-dark'
+                                          isCurrent ? 'text-white' : isLocked ? 'text-secondary' : 'text-dark'
                                         }`}
                                         style={{
                                           fontSize: '0.82rem',
@@ -4234,14 +4528,28 @@ export default function CourseLearningView({
                                     </div>
                                   </div>
 
-                                  {isCurrent && (
+                                  {isCurrent ? (
                                     <span
                                       className="badge bg-white text-primary rounded-pill flex-shrink-0 ms-1 fw-bold"
                                       style={{ fontSize: '0.65rem', padding: '0.3em 0.6em' }}
                                     >
                                       Active
                                     </span>
-                                  )}
+                                  ) : isDone ? (
+                                    <span
+                                      className="badge bg-success bg-opacity-15 text-success rounded-pill flex-shrink-0 ms-1 fw-semibold"
+                                      style={{ fontSize: '0.65rem', padding: '0.3em 0.6em' }}
+                                    >
+                                      Completed
+                                    </span>
+                                  ) : isLocked ? (
+                                    <span
+                                      className="badge bg-secondary bg-opacity-15 text-secondary rounded-pill flex-shrink-0 ms-1 fw-semibold"
+                                      style={{ fontSize: '0.65rem', padding: '0.3em 0.6em' }}
+                                    >
+                                      Locked
+                                    </span>
+                                  ) : null}
                                 </div>
                               )
                             })
