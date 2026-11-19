@@ -1441,6 +1441,7 @@ export default function StudentDashboard({ onLogout }) {
           />
         ) : activeView === 'explore' ? (
           <CourseExplorationView
+            currentUser={currentUser}
             onSelectCourse={handleOpenCourseDetails}
             onOpenDetails={handleOpenCourseDetails}
             onBack={() => navigateTo('home', 'home')}
